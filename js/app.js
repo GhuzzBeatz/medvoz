@@ -220,11 +220,15 @@ function releaseCaptureStreams() {
   store.rawStreams = []
   if (store.mixContext) store.mixContext.close().catch(() => {})
   store.mixContext = null
+  store.micStream = null
+  store.systemStream = null
 }
 
 async function openRecordingStream() {
   const mic = await navigator.mediaDevices.getUserMedia({ audio: true })
   store.rawStreams = [mic]
+  store.micStream = mic
+  store.systemStream = null
   if ($('#audioSource').value !== 'mixed') return mic
 
   let system
@@ -241,7 +245,8 @@ async function openRecordingStream() {
     throw new Error('O som do computador nao foi liberado. Use somente o microfone ou tente novamente.')
   }
 
-  // Mix doctor (microphone) and remote patient (system audio) into one recording track.
+  // Keep the sources apart for speaker separation, and mix them into one recording track.
+  store.systemStream = new MediaStream(system.getAudioTracks())
   store.mixContext = new AudioContext()
   const destination = store.mixContext.createMediaStreamDestination()
   store.mixContext.createMediaStreamSource(mic).connect(destination)
@@ -302,6 +307,65 @@ async function finishLiveTranscription() {
   if (!store.finalTranscriptSet && result.gateOk && result.text) $('#transcriptText').value = result.text
 }
 
+function startSpeakerTurns() {
+  // Teleconsult: microphone = doctor, computer sound = patient (see js/speaker-turns.js).
+  store.liveText = ''
+  store.liveGateOk = false
+  const showLive = $('#liveToggle').checked
+  setLiveUi(showLive)
+  window.MedVozTurns.start(store.micStream, store.systemStream, {
+    getContext,
+    onText: (text) => {
+      store.liveText = text
+      store.liveGateOk = true
+      if (!showLive || store.finalTranscriptSet) return
+      $('#transcriptText').value = text
+    },
+    onStatus: (text, className) => liveStatus(text, className),
+    onBlocked: (message) => {
+      store.liveText = ''
+      store.liveGateOk = false
+      $('#transcriptText').value = ''
+      setLiveUi(false)
+      liveStatus(message, 'status-error')
+    }
+  })
+}
+
+async function applyTeleconsultTranscript(result) {
+  // Returns true when the teleconsult transcript was handled; false falls back to the full transcription.
+  $('#liveBadge').hidden = true
+  liveStatus('')
+  if (result?.blocked) {
+    store.finalTranscriptSet = true
+    $('#transcriptText').value = ''
+    status($('#gateStatus'), 'Nao foi encontrado assunto especifico de medicina/saude. A transcricao nao foi liberada.', 'status-error')
+    setRecordingUi(false)
+    return true
+  }
+  const tooManyFailures = result && result.failures > Math.max(1, Math.round(result.turns * 0.1))
+  if (!result?.text || !result.turns || tooManyFailures) return false
+  if (!(await ensureOpenAiConfigured())) return true
+  status($('#gateStatus'), 'Validando a transcricao da teleconsulta...', 'status-warn')
+  const gate = await window.medvozApi.classifyTranscript({ transcript: result.text, context: getContext() })
+  store.gate = gate
+  if (!gate?.ok || !gate.medical) {
+    if (gate?.medical !== false) return false
+    store.finalTranscriptSet = true
+    $('#transcriptText').value = ''
+    status($('#gateStatus'), gate.message || 'Nao foi encontrado assunto especifico de medicina/saude. A transcricao nao foi liberada.', 'status-error')
+    setRecordingUi(false)
+    return true
+  }
+  store.finalTranscriptSet = true
+  store.liveText = result.text
+  store.liveGateOk = true
+  $('#transcriptText').value = result.text
+  status($('#gateStatus'), 'Transcricao da teleconsulta pronta: microfone = medico, som do computador = paciente.', 'status-ok')
+  setRecordingUi(false)
+  return true
+}
+
 function recordedMs() {
   const running = store.startedAt ? Date.now() - store.startedAt : 0
   return (store.elapsedMs || 0) + running
@@ -335,6 +399,7 @@ async function startRecording() {
   $('#recordStatus').textContent = 'Preparando microfone...'
   try {
     window.MedVozLive?.cancel()
+    window.MedVozTurns?.cancel()
     store.stream = await openRecordingStream()
   } catch (error) {
     $('#btnStartRecord').disabled = false
@@ -380,7 +445,8 @@ async function startRecording() {
     }
   }
   store.recorder.start(1000)
-  startLiveTranscription(store.stream)
+  if (store.systemStream && window.MedVozTurns) startSpeakerTurns()
+  else startLiveTranscription(store.stream)
   store.elapsedMs = 0
   startTimer()
   renderTimer()
@@ -393,6 +459,7 @@ function pauseRecording() {
   if (store.recorder.state === 'recording') {
     store.recorder.pause()
     window.MedVozLive?.pause()
+    window.MedVozTurns?.pause()
     stopTimer()
     renderTimer()
     $('#recordStatus').textContent = 'Gravacao pausada'
@@ -400,6 +467,7 @@ function pauseRecording() {
   } else if (store.recorder.state === 'paused') {
     store.recorder.resume()
     window.MedVozLive?.resume()
+    window.MedVozTurns?.resume()
     startTimer()
     $('#recordStatus').textContent = 'Gravando consulta'
     $('#btnPauseRecord').textContent = 'Pausar'
@@ -421,9 +489,13 @@ function stopRecording() {
     store.recorder.addEventListener('stop', resolve, { once: true })
   })
   store.recorder.stop()
-  store.liveFinish = finishLiveTranscription().catch(() => {})
+  const turnsFinish = window.MedVozTurns?.isActive() ? window.MedVozTurns.stop() : null
+  store.liveFinish = turnsFinish ? null : finishLiveTranscription().catch(() => {})
   store.stopPromise
-    .then(() => autoValidateAndTranscribe())
+    .then(async () => {
+      if (turnsFinish && (await applyTeleconsultTranscript(await turnsFinish))) return
+      return autoValidateAndTranscribe()
+    })
     .catch((error) => status($('#gateStatus'), error.message || 'Falha ao finalizar audio.', 'status-error'))
 }
 
@@ -543,6 +615,7 @@ async function importAudioFile(file) {
   }
 
   window.MedVozLive?.cancel()
+  window.MedVozTurns?.cancel()
   const type = audioTypeFor(file)
   store.audioBlob = new Blob([file], { type })
   store.chunks = [store.audioBlob]
@@ -565,9 +638,46 @@ async function importAudioFile(file) {
   await autoValidateAndTranscribe()
 }
 
+const DOCTOR_CUES = /\b(vamos|vou (te |lhe )?(pedir|passar|solicitar|prescrever|receitar|examinar|encaminhar|auscultar)|receit|prescri|prescrev|solicit|encaminh|exames?\b|comprimidos?|\d+\s?mg\b|de \d+ em \d+ horas|retorno|respire|deite|abra a boca|pode (sentar|deitar|tirar)|desde quando|h[aá] quanto tempo|sente (alguma|dor)|tem (alergia|febre|dor)|alguma alergia|me (conta|fala|diz)|o que (te )?trouxe|como (voc[eê]|a senhora|o senhor) (est[aá]|ficou|tem)|press[aã]o|diagn[oó]stic|orienta[cç]|sinais de alarme|conduta)/gi
+const PATIENT_CUES = /\b(eu (sinto|senti|tenho|tive|estou|t[oô]|fiquei|tomei|tomo|acho|n[aã]o consigo)|t[oô] (sentindo|com)|me d[oó]i|d[oó]i (muito|aqui|bastante)|doutora?\b|dr\.?a?\b|minha (dor|cabe[cç]a|barriga|press[aã]o|m[aã]e|filh)|meu (est[oô]mago|peito|filho|marido)|comecei a|faz (uns|umas|tr[eê]s|dois|duas|uma|um) (dia|dias|semana|semanas|m[eê]s|meses))/gi
+const KNOWN_ROLE = /m[eé]dic|paciente|doutor|acompanhante|enfermeir/i
+
+function countMatches(text, pattern) {
+  pattern.lastIndex = 0
+  return (String(text || '').match(pattern) || []).length
+}
+
+function assignSpeakerRoles(segments) {
+  // In-person visits: the AI separates voices (A, B...) but does not know who is who.
+  // Score each voice by what it says and name the doctor and the patient.
+  const speakers = []
+  segments.forEach((segment) => {
+    const name = String(segment.speaker || '').trim()
+    if (name && !speakers.includes(name)) speakers.push(name)
+  })
+  if (speakers.length < 2 || speakers.some((name) => KNOWN_ROLE.test(name))) return segments
+
+  const stats = new Map(speakers.map((name, order) => [name, { order, words: 0, questions: 0, doctor: 0, patient: 0 }]))
+  segments.forEach((segment) => {
+    const item = stats.get(String(segment.speaker || '').trim())
+    if (!item) return
+    const text = String(segment.text || '')
+    item.words += text.split(/\s+/).filter(Boolean).length
+    item.questions += (text.match(/\?/g) || []).length
+    item.doctor += countMatches(text, DOCTOR_CUES)
+    item.patient += countMatches(text, PATIENT_CUES)
+  })
+  const doctorScore = (item) => item.questions * 1.2 + item.doctor * 2 - item.patient * 2 + (item.order === 0 ? 0.5 : 0)
+  const ranked = [...stats.entries()].sort((a, b) => doctorScore(b[1]) - doctorScore(a[1]))
+  const doctor = ranked[0][0]
+  const patient = ranked.slice(1).sort((a, b) => (b[1].patient - b[1].doctor + b[1].words / 1000) - (a[1].patient - a[1].doctor + a[1].words / 1000))[0][0]
+  const names = new Map(speakers.map((name) => [name, name === doctor ? 'Medico' : name === patient ? 'Paciente' : 'Acompanhante']))
+  return segments.map((segment) => ({ ...segment, speaker: names.get(String(segment.speaker || '').trim()) || segment.speaker }))
+}
+
 function renderTranscript(result) {
   if (Array.isArray(result.segments) && result.segments.length) {
-    return result.segments.map((segment) => {
+    return assignSpeakerRoles(result.segments).map((segment) => {
       const speaker = segment.speaker ? `${segment.speaker}: ` : ''
       return `${speaker}${segment.text || ''}`.trim()
     }).join('\n')
