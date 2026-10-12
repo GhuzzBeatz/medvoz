@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MedVoz</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body data-theme="dark">
+  <div class="app-shell">
+    <aside class="sidebar">
+      <header class="app-brand">
+        <span class="app-brand-icon" data-app-logo>MED</span>
+        <div>
+          <strong data-app-name>MedVoz</strong>
+          <small>Documentacao clinica por voz</small>
+        </div>
+      </header>
+
+      <nav class="sidebar-nav" aria-label="Menu principal">
+        <button class="nav-button active" data-page="dashboard"><span>01</span>Visao geral</button>
+        <button class="nav-button" data-page="atendimento"><span>02</span>Atendimento</button>
+        <button class="nav-button" data-page="pacientes"><span>03</span>Pacientes</button>
+        <button class="nav-button" data-page="documentos"><span>04</span>Documentos</button>
+        <button class="nav-button" data-page="agente"><span>05</span>Agente clinico</button>
+        <button class="nav-button" data-page="atualizacoes"><span>06</span>Atualizacoes</button>
+        <button class="nav-button" data-page="configuracoes"><span>07</span>Ajustes</button>
+      </nav>
+
+      <footer class="menu-footer">
+        <button class="theme-button" id="themeButton" type="button">
+          <span id="themeIcon">SUN</span>
+          <span id="themeLabel">Modo Claro</span>
+        </button>
+        <div class="menu-footer-support"></div>
+      </footer>
+    </aside>
+
+    <main class="workspace">
+      <header class="titlebar">
+        <div class="titlebar-drag"></div>
+        <div class="window-controls">
+          <button type="button" id="minimizeButton" aria-label="Minimizar">&#8722;</button>
+          <button type="button" id="maximizeButton" aria-label="Maximizar">&#9633;</button>
+          <button type="button" id="closeButton" class="close" aria-label="Fechar">&#10005;</button>
+        </div>
+      </header>
+
+      <div class="content-area ghz-scrollable">
+        <section class="page active" data-page-panel="dashboard">
+          <div class="page-heading">
+            <div>
+              <p>Central de transcricao medica, prontuario e revisao clinica.</p>
+              <h1>Rotina do dia</h1>
+            </div>
+            <button class="primary-button" type="button" data-jump="atendimento">Novo atendimento</button>
+          </div>
+          <div class="stats-grid med-stats">
+            <article class="stat-card"><small>CONSULTAS HOJE</small><strong id="statToday">0</strong><span>registradas localmente</span></article>
+            <article class="stat-card"><small>PACIENTES</small><strong id="statPatients">0</strong><span>com historico salvo</span></article>
+            <article class="stat-card"><small>DOCUMENTOS</small><strong id="statDocs">0</strong><span>gerados para revisao</span></article>
+            <article class="stat-card"><small>PENDENCIAS</small><strong id="statGaps">0</strong><span>lacunas clinicas abertas</span></article>
+          </div>
+          <div class="dashboard-grid">
+            <article class="content-card">
+              <div class="card-head">
+                <div>
+                  <small class="section-label">Fila recente</small>
+                  <h2>Ultimos atendimentos</h2>
+                </div>
+              </div>
+              <div class="list-stack" id="recentVisits"></div>
+            </article>
+            <article class="content-card">
+              <small class="section-label">Seguranca de uso</small>
+              <h2>Transcricao restrita a saude</h2>
+              <p>O MedVoz exige contexto clinico, consentimento e validacao por IA antes de liberar a transcricao completa. Conteudos fora de saude sao bloqueados.</p>
+              <div class="rule-list">
+                <span>Consulta presencial</span>
+                <span>Teleconsulta ou reuniao clinica</span>
+                <span>Discussao de caso e prontuario</span>
+                <span>Saude ocupacional e odontologia</span>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="page" data-page-panel="atendimento">
+          <div class="page-heading">
+            <div>
+              <p>Grave consulta presencial, teleconsulta ou reuniao clinica.</p>
+              <h1>Atendimento ao vivo</h1>
+            </div>
+            <div class="button-row">
+              <button class="secondary-button" id="btnDemo" type="button">Preencher exemplo</button>
+              <button class="primary-button" id="btnSaveVisit" type="button">Salvar atendimento</button>
+            </div>
+          </div>
+
+          <div class="clinical-grid">
+            <article class="content-card">
+              <small class="section-label">Contexto obrigatorio</small>
+              <h2>Paciente e finalidade</h2>
+              <div class="form-grid">
+                <label>Paciente<input id="patientName" placeholder="Nome completo"></label>
+                <label>Idade<input id="patientAge" type="number" min="0" placeholder="Ex.: 42"></label>
+                <label>Documento<input id="patientDoc" placeholder="CPF, RG ou prontuario"></label>
+                <label>Telefone<input id="patientPhone" placeholder="WhatsApp do paciente"></label>
+                <label>Especialidade
+                  <select id="specialty">
+                    <option>Clinica medica</option>
+                    <option>Cardiologia</option>
+                    <option>Dermatologia</option>
+                    <option>Endocrinologia</option>
+                    <option>Ginecologia</option>
+                    <option>Medicina do trabalho</option>
+                    <option>Neurologia</option>
+                    <option>Odontologia</option>
+                    <option>Ortopedia</option>
+                    <option>Pediatria</option>
+                    <option>Psicologia</option>
+                    <option>Psiquiatria</option>
+                  </select>
+                </label>
+                <label>Tipo
+                  <select id="visitType">
+                    <option>Consulta presencial</option>
+                    <option>Teleconsulta</option>
+                    <option>Retorno</option>
+                    <option>Reuniao clinica</option>
+                    <option>Discussao de caso</option>
+                    <option>Saude ocupacional</option>
+                  </select>
+                </label>
+              </div>
+              <label>Motivo clinico
+                <input id="visitReason" placeholder="Ex.: retorno para dor lombar, discussao de caso, ASO">
+              </label>
+              <label class="check-row">
+                <input id="recordConsent" type="checkbox">
+                <span>Paciente/equipe ciente da gravacao e uso para documentacao clinica.</span>
+              </label>
+              <div class="recorder-box">
+                <div>
+                  <small class="section-label">Gravador</small>
+                  <strong id="recordTimer">00:00</strong>
+                  <span id="recordStatus">Pronto para gravar</span>
+                </div>
+                <div class="button-row">
+                  <button class="primary-button" id="btnStartRecord" type="button">Iniciar</button>
+                  <button class="secondary-button" id="btnPauseRecord" type="button" disabled>Pausar</button>
+                  <button class="danger-button" id="btnStopRecord" type="button" disabled>Encerrar</button>
+                </div>
+              </div>
+              <div class="button-row spread">
+                <button class="secondary-button" id="btnGateSample" type="button" disabled>Validar assunto</button>
+                <button class="primary-button" id="btnFullTranscribe" type="button" disabled>Transcrever completo</button>
+              </div>
+              <p class="inline-status" id="gateStatus">A validacao aparece aqui antes da transcricao completa.</p>
+            </article>
+
+            <article class="content-card">
+              <div class="card-head">
+                <div>
+                  <small class="section-label">Texto completo</small>
+                  <h2>Transcricao da conversa</h2>
+                </div>
+                <button class="secondary-button compact" id="btnPasteTranscript" type="button">Colar texto</button>
+              </div>
+              <textarea id="transcriptText" class="large-text" placeholder="A transcricao completa aparece aqui. Tambem e possivel colar uma transcricao externa para gerar documentos."></textarea>
+            </article>
+          </div>
+
+          <div class="document-workbench">
+            <article class="content-card">
+              <div class="card-head">
+                <div>
+                  <small class="section-label">Geracao revisavel</small>
+                  <h2>Documento clinico</h2>
+                </div>
+                <div class="button-row">
+                  <select id="documentType" class="compact-select">
+                    <option value="soap">SOAP</option>
+                    <option value="evolucao">Evolucao</option>
+                    <option value="receita">Receita/conduta</option>
+                    <option value="atestado">Atestado</option>
+                    <option value="encaminhamento">Encaminhamento</option>
+                    <option value="exames">Solicitacao de exames</option>
+                    <option value="lme">LME</option>
+                    <option value="spsadt">Guia SP/SADT</option>
+                  </select>
+                  <button class="primary-button" id="btnGenerateDoc" type="button">Gerar</button>
+                </div>
+              </div>
+              <textarea id="clinicalDocument" class="large-text document-text" placeholder="O documento gerado pela IA aparece aqui para revisao profissional."></textarea>
+              <div class="button-row spread">
+                <button class="secondary-button" id="btnCopyDoc" type="button">Copiar documento</button>
+                <button class="secondary-button" id="btnQuality" type="button">Revisar qualidade</button>
+              </div>
+            </article>
+
+            <article class="content-card">
+              <small class="section-label">Controle de qualidade</small>
+              <h2>Lacunas e alertas</h2>
+              <div class="list-stack" id="qualityPanel"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="page" data-page-panel="pacientes">
+          <div class="page-heading">
+            <div>
+              <p>Historico local com consultas, documentos e arquivos vinculados.</p>
+              <h1>Pacientes</h1>
+            </div>
+            <input id="patientSearch" class="search-input" placeholder="Buscar paciente">
+          </div>
+          <div class="patient-layout">
+            <article class="content-card">
+              <small class="section-label">Cadastro</small>
+              <h2>Dados e linha do tempo</h2>
+              <div class="list-stack" id="patientList"></div>
+            </article>
+            <article class="content-card">
+              <small class="section-label">Resumo do paciente</small>
+              <h2 id="patientDetailTitle">Selecione um paciente</h2>
+              <div id="patientDetail" class="detail-box"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="page" data-page-panel="documentos">
+          <div class="page-heading">
+            <div>
+              <p>Modelos prontos para gerar, revisar e copiar.</p>
+              <h1>Documentos</h1>
+            </div>
+          </div>
+          <div class="template-grid" id="templateGrid"></div>
+        </section>
+
+        <section class="page" data-page-panel="agente">
+          <div class="page-heading">
+            <div>
+              <p>Um agente de apoio para evidencias, escores e checagem clinica.</p>
+              <h1>Agente clinico</h1>
+            </div>
+          </div>
+          <div class="agent-grid">
+            <article class="content-card">
+              <small class="section-label">Pergunta contextual</small>
+              <h2>Peça uma analise</h2>
+              <textarea id="agentPrompt" class="medium-text" placeholder="Ex.: Calcule criterios, aponte lacunas do plano, gere orientacoes ao paciente em linguagem simples."></textarea>
+              <button class="primary-button" id="btnAskAgent" type="button">Analisar com contexto</button>
+            </article>
+            <article class="content-card">
+              <small class="section-label">Resposta</small>
+              <h2>Rascunho do agente</h2>
+              <div id="agentAnswer" class="answer-box"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="page" data-page-panel="atualizacoes">
+          <div class="page-heading">
+            <div>
+              <p>O cliente deve atualizar sempre por um caminho fixo.</p>
+              <h1>Atualizacoes</h1>
+            </div>
+            <button class="primary-button" id="btnCheckUpdates" type="button">Verificar</button>
+          </div>
+          <article class="content-card">
+            <small class="section-label">Status</small>
+            <h2>Versao instalada</h2>
+            <div id="updateStatus" class="detail-box"></div>
+          </article>
+        </section>
+
+        <section class="page" data-page-panel="configuracoes">
+          <div class="page-heading">
+            <div>
+              <p>Preferencias locais da clinica e padroes de documento.</p>
+              <h1>Ajustes</h1>
+            </div>
+            <button class="primary-button" id="btnSaveSettings" type="button">Salvar ajustes</button>
+          </div>
+          <div class="settings-grid">
+            <article class="content-card">
+              <small class="section-label">Clinica</small>
+              <h2>Identidade do documento</h2>
+              <label>Nome da clinica<input id="clinicName" placeholder="Ex.: Clinica Integrada"></label>
+              <label>Profissional/CRM<input id="doctorName" placeholder="Ex.: Dra. Ana Silva - CRM 00000"></label>
+              <label>Rodape padrao<textarea id="footerText" class="medium-text" placeholder="Endereco, contato, observacoes padrao."></textarea></label>
+            </article>
+            <article class="content-card">
+              <small class="section-label">IA</small>
+              <h2>Preferencias clinicas</h2>
+              <label>Nivel de detalhe
+                <select id="detailLevel">
+                  <option value="objetivo">Objetivo</option>
+                  <option value="completo">Completo</option>
+                  <option value="auditoria">Auditoria/juridico</option>
+                </select>
+              </label>
+              <label>Estilo
+                <select id="tone">
+                  <option value="clinico direto">Clinico direto</option>
+                  <option value="comunicacao entre profissionais">Comunicacao entre profissionais</option>
+                  <option value="orientacao para paciente">Orientacao para paciente</option>
+                </select>
+              </label>
+              <div class="detail-box" id="licenseBox"></div>
+            </article>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script src="components/ghz-window-bar.js" data-target=".menu-footer" data-accent="var(--accent)" data-theme-key="ghz-app-theme"></script>
+  <script src="components/ghz-support.js" data-target=".menu-footer-support" data-accent="var(--accent)"></script>
+</body>
+</html>

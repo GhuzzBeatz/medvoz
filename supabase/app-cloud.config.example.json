@@ -1,0 +1,25 @@
+{
+  "appName": "NOME DO APLICATIVO",
+  "appId": "app-id",
+  "appSlug": "app-id",
+  "licensePrefix": "APP",
+  "brokerFunction": "app-client-cloud",
+  "clientTablePrefix": "app_",
+  "clientProjectName": "Aplicativo Cloud",
+  "clientProjectRegion": "sa-east-1",
+  "centralProjectRef": "PROJETO_CENTRAL_GHZ",
+  "redirectUri": "https://PROJETO_CENTRAL_GHZ.supabase.co/functions/v1/app-client-cloud/callback",
+  "doneUrl": "https://ghzplugin.com.br/conectado.html",
+  "updateEndpoint": "https://PROJETO_CENTRAL_GHZ.supabase.co/functions/v1/ghz-app-downloads?app=app-id",
+  "maxCloudDevices": 5,
+  "tables": [
+    { "local": "config", "remote": "app_config", "type": "object" },
+    { "local": "itens", "remote": "app_itens", "type": "array" }
+  ],
+  "oauthScopes": {
+    "organizations": ["read"],
+    "projects": ["read", "write"],
+    "database": ["write"],
+    "secrets": ["read"]
+  }
+}

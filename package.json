@@ -1,0 +1,41 @@
+{
+  "name": "medvoz",
+  "version": "1.0.0",
+  "description": "Assistente GHZ para transcricao medica, documentacao clinica e gestao de pacientes",
+  "main": "main.js",
+  "author": "GHZ Plugin",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check main.js && node --check preload.js && node --check js/app.js && node --check js/license.js && node --check services/license-service.js && node tests/medvoz-smoke.js",
+    "dist": "electron-builder --win nsis --publish never"
+  },
+  "devDependencies": {
+    "electron": "37.10.3",
+    "electron-builder": "24.13.3"
+  },
+  "build": {
+    "appId": "com.ghzplugin.medvoz",
+    "productName": "MedVoz",
+    "directories": {
+      "output": "dist_installer"
+    },
+    "files": [
+      "**/*",
+      "!dist_installer/**/*",
+      "!dist/**/*",
+      "!tests/**/*",
+      "!.env",
+      "!.env.*"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

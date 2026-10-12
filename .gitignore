@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist_installer/
+APP.zip
+*.log
+.env
+.env.*
+!.env.example

@@ -1,0 +1,10 @@
+﻿cloud_supabase.json
+.env
+.env.local
+*.local
+secrets.json
+*.key
+*.pem
+node_modules/
+dist/
+dist_installer/

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ativar licenca</title>
+  <link rel="stylesheet" href="../css/license.css">
+</head>
+<body>
+  <header class="license-titlebar">
+    <div></div>
+    <div class="window-controls">
+      <button type="button" id="minimizeButton" aria-label="Minimizar">&#8722;</button>
+      <button type="button" id="closeButton" aria-label="Fechar">&#10005;</button>
+    </div>
+  </header>
+  <main class="license-shell">
+    <section class="license-card">
+      <div class="license-icon">&#128273;</div>
+      <p class="eyebrow">GHZ PLUGIN</p>
+      <h1>Ativacao de licenca</h1>
+      <p class="description">Digite a chave fornecida na compra para liberar o aplicativo.</p>
+      <form id="licenseForm">
+        <label for="licenseKey">Chave de licenca</label>
+        <input id="licenseKey" autocomplete="off" placeholder="MEDVOZ-XXXX-XXXX-XXXX" required>
+        <label for="licensePhone">Telefone do cliente</label>
+        <input id="licensePhone" autocomplete="tel" placeholder="Opcional para vinculo do suporte">
+        <button type="submit">Ativar licenca</button>
+      </form>
+      <p id="licenseMessage" class="message" role="status"></p>
+      <div class="license-meta" aria-label="Informacoes do aplicativo">
+        <span id="appVersion">Versao</span>
+        <button id="supportButton" class="support-link" type="button">Abrir suporte</button>
+      </div>
+    </section>
+  </main>
+  <script src="../js/license.js"></script>
+</body>
+</html>

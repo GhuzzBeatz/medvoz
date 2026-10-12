@@ -1,0 +1,182 @@
+:root {
+  --accent: #f97316;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+  background: #0d111b;
+  color: #f8fafc;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.license-titlebar {
+  display: flex;
+  height: 42px;
+  justify-content: space-between;
+  -webkit-app-region: drag;
+}
+
+.window-controls {
+  display: flex;
+  -webkit-app-region: no-drag;
+}
+
+.window-controls button {
+  width: 46px;
+  border: 0;
+  background: transparent;
+  color: #8795aa;
+  cursor: pointer;
+}
+
+.window-controls button:hover {
+  background: rgba(255, 255, 255, .07);
+  color: #fff;
+}
+
+.license-shell {
+  display: grid;
+  height: calc(100vh - 42px);
+  place-items: center;
+  padding: 24px;
+}
+
+.license-card {
+  width: min(390px, 100%);
+  padding: 30px;
+  border: 1px solid #2a3852;
+  border-radius: 16px;
+  background: #172135;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, .35);
+}
+
+.license-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 17px;
+  place-items: center;
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 21px;
+}
+
+.eyebrow,
+.license-card h1,
+.description {
+  margin: 0;
+}
+
+.eyebrow {
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .12em;
+}
+
+.license-card h1 {
+  margin-top: 7px;
+  font-size: 24px;
+}
+
+.description {
+  margin-top: 9px;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+form {
+  margin-top: 22px;
+}
+
+label {
+  display: block;
+  margin-bottom: 7px;
+  color: #cbd5e1;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+input {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid #33435f;
+  border-radius: 8px;
+  outline: 0;
+  background: #0d1422;
+  color: #fff;
+  font-size: 12px;
+}
+
+input:focus {
+  border-color: var(--accent);
+}
+
+form button {
+  width: 100%;
+  margin-top: 10px;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+form button:disabled {
+  cursor: wait;
+  opacity: .65;
+}
+
+.message {
+  min-height: 17px;
+  margin: 11px 0 0;
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.message.error {
+  color: #fb7185;
+}
+
+.license-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 15px 0 0;
+  color: #64748b;
+  font-size: 9px;
+}
+
+.support-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.support-link:hover {
+  color: #fed7aa;
+  text-decoration: underline;
+}
