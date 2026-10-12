@@ -18,13 +18,13 @@
       </header>
 
       <nav class="sidebar-nav" aria-label="Menu principal">
-        <button class="nav-button active" data-page="dashboard"><span>01</span>Visao geral</button>
-        <button class="nav-button" data-page="atendimento"><span>02</span>Atendimento</button>
-        <button class="nav-button" data-page="pacientes"><span>03</span>Pacientes</button>
-        <button class="nav-button" data-page="documentos"><span>04</span>Documentos</button>
-        <button class="nav-button" data-page="agente"><span>05</span>Agente clinico</button>
-        <button class="nav-button" data-page="atualizacoes"><span>06</span>Atualizacoes</button>
-        <button class="nav-button" data-page="configuracoes"><span>07</span>Ajustes</button>
+        <button class="nav-button active" data-page="dashboard"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></span>Visao geral</button>
+        <button class="nav-button" data-page="atendimento"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/></svg></span>Atendimento<span class="nav-live">REC</span></button>
+        <button class="nav-button" data-page="pacientes"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></svg></span>Pacientes</button>
+        <button class="nav-button" data-page="documentos"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>Documentos</button>
+        <button class="nav-button" data-page="agente"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6 4.6 1.9-4.6 1.9L12 16l-1.9-4.6-4.6-1.9 4.6-1.9z"/><path d="M19 15l.8 2.2 2.2.8-2.2.8L19 21l-.8-2.2-2.2-.8 2.2-.8z"/></svg></span>Agente clinico</button>
+        <button class="nav-button" data-page="atualizacoes"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/><path d="M3 12A9 9 0 0 1 18.5 5.8L21 8"/><path d="M21 3v5h-5"/></svg></span>Atualizacoes</button>
+        <button class="nav-button" data-page="configuracoes"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></span>Ajustes</button>
       </nav>
 
       <footer class="menu-footer">
@@ -150,6 +150,11 @@
                   <button class="primary-button" id="btnStartRecord" type="button">Iniciar</button>
                   <button class="secondary-button" id="btnPauseRecord" type="button" disabled>Pausar</button>
                   <button class="danger-button" id="btnStopRecord" type="button" disabled>Encerrar</button>
+                </div>
+                <div class="mic-visual" id="micVisual" data-state="idle" aria-live="polite">
+                  <div class="mic-orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/></svg></div>
+                  <div class="mic-bars" id="micBars" aria-hidden="true"></div>
+                  <div class="mic-label"><b id="micLabel">Microfone desligado</b><em id="micHint">Clique em Iniciar para gravar</em></div>
                 </div>
               </div>
               <div class="button-row spread">
@@ -309,6 +314,10 @@
                   <option value="orientacao para paciente">Orientacao para paciente</option>
                 </select>
               </label>
+              <label>Chave OpenAI local
+                <input id="openaiKey" type="password" placeholder="Cole a chave apenas neste computador">
+              </label>
+              <p class="inline-status" id="openaiStatus">Status da chave OpenAI.</p>
               <div class="detail-box" id="licenseBox"></div>
             </article>
           </div>
@@ -318,6 +327,7 @@
   </div>
 
   <script src="js/app.js"></script>
+  <script src="js/mic-visualizer.js"></script>
   <script src="components/ghz-window-bar.js" data-target=".menu-footer" data-accent="var(--accent)" data-theme-key="ghz-app-theme"></script>
   <script src="components/ghz-support.js" data-target=".menu-footer-support" data-accent="var(--accent)"></script>
 </body>

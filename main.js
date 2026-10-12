@@ -12,6 +12,7 @@ const { createLicenseService } = require('./services/license-service')
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 let mainWindow = null
 let licenseService = null
+let appDataDir = null
 const appRootUrl = pathToFileURL(`${__dirname}${path.sep}`).href
 const licensePageUrl = pathToFileURL(path.join(__dirname, 'pages', 'licenca.html')).href
 const SUPPORT_URL = 'https://ghzplugin.com.br/suporte/'
@@ -31,8 +32,30 @@ function readEnvFile(filePath) {
 }
 
 function getOpenAiKey() {
+  const userEnvPath = appDataDir ? path.join(appDataDir, '.env.local') : ''
+  const userEnv = userEnvPath ? readEnvFile(userEnvPath) : {}
   const env = readEnvFile(path.join(__dirname, '.env.local'))
-  return process.env.OPENAI_API_KEY || env.OPENAI_API_KEY || ''
+  return process.env.OPENAI_API_KEY || userEnv.OPENAI_API_KEY || env.OPENAI_API_KEY || ''
+}
+
+function maskSecret(value) {
+  const text = String(value || '')
+  if (!text) return ''
+  return `${text.slice(0, 7)}...${text.slice(-4)}`
+}
+
+function saveOpenAiKey(value) {
+  const key = String(value || '').trim()
+  if (!key) return { ok: false, message: 'Informe a chave OpenAI.' }
+  if (!/^sk-/.test(key)) return { ok: false, message: 'A chave OpenAI parece invalida.' }
+  fs.mkdirSync(appDataDir, { recursive: true })
+  fs.writeFileSync(path.join(appDataDir, '.env.local'), `OPENAI_API_KEY=${key}\n`, 'utf8')
+  return { ok: true, masked: maskSecret(key) }
+}
+
+function getOpenAiStatus() {
+  const key = getOpenAiKey()
+  return { configured: Boolean(key), masked: maskSecret(key) }
 }
 
 function requestJson(urlValue, payload, timeoutMs = 25000) {
@@ -170,16 +193,22 @@ async function transcribeBuffer(payload) {
   if (!intake.ok) return intake
 
   const bytes = payload?.audioBytes
-  if (!bytes || !bytes.byteLength) return { ok: false, message: 'Audio vazio.' }
+  const byteLength = bytes?.byteLength || bytes?.length || 0
+  if (!bytes || byteLength === 0) return { ok: false, message: 'Audio vazio.' }
+  const audioBuffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes)
+  if (!audioBuffer.byteLength) return { ok: false, message: 'Audio vazio.' }
 
   const form = new FormData()
   const mimeType = payload.mimeType || 'audio/webm'
   const fileName = payload.fileName || 'consulta.webm'
-  form.append('file', new Blob([Buffer.from(bytes)], { type: mimeType }), fileName)
+  form.append('file', new Blob([audioBuffer], { type: mimeType }), fileName)
   form.append('model', payload.diarize ? 'gpt-4o-transcribe-diarize' : config.transcriptionModel)
   form.append('language', 'pt')
-  form.append('prompt', 'Transcreva em portugues do Brasil. O audio deve ser de consulta, reuniao clinica, odontologia, saude ocupacional, psicologia, prontuario, discussao de caso ou atendimento de saude.')
-  if (payload.diarize) form.append('response_format', 'diarized_json')
+  if (payload.diarize) {
+    form.append('response_format', 'diarized_json')
+  } else {
+    form.append('prompt', 'Transcreva em portugues do Brasil. O audio deve ser de consulta, reuniao clinica, odontologia, saude ocupacional, psicologia, prontuario, discussao de caso ou atendimento de saude.')
+  }
 
   const result = await callOpenAi('audio/transcriptions', form, true)
   if (!result.ok) return result
@@ -342,6 +371,8 @@ ipcMain.handle('app:check-updates', async () => {
   const result = await requestJson(config.updateEndpoint)
   return { installedVersion: app.getVersion(), downloadPage: config.downloadPage, ...result }
 })
+ipcMain.handle('ai:get-openai-status', async () => getOpenAiStatus())
+ipcMain.handle('ai:save-openai-key', async (_event, value) => saveOpenAiKey(value))
 
 ipcMain.handle('license:get-state', async () => licenseService.readState())
 ipcMain.handle('license:device-info', async () => licenseService.getPublicDeviceInfo())
@@ -374,11 +405,12 @@ app.on('second-instance', () => {
 })
 
 app.whenReady().then(async () => {
+  appDataDir = path.join(app.getPath('userData'), config.appId)
   licenseService = createLicenseService({
     app,
     appId: config.appId,
     licenseApiUrl: config.licenseApiUrl,
-    dataDir: path.join(app.getPath('userData'), config.appId),
+    dataDir: appDataDir,
     crypto,
     fs,
     os,

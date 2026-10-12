@@ -1,13 +1,13 @@
 {
   "name": "medvoz",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Assistente GHZ para transcricao medica, documentacao clinica e gestao de pacientes",
   "main": "main.js",
   "author": "GHZ Plugin",
   "license": "UNLICENSED",
   "scripts": {
     "start": "electron .",
-    "check": "node --check main.js && node --check preload.js && node --check js/app.js && node --check js/license.js && node --check services/license-service.js && node tests/medvoz-smoke.js",
+    "check": "node --check main.js && node --check preload.js && node --check js/app.js && node --check js/license.js && node --check js/mic-visualizer.js && node --check services/license-service.js && node tests/medvoz-smoke.js",
     "dist": "electron-builder --win nsis --publish never"
   },
   "devDependencies": {

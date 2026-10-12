@@ -7,6 +7,9 @@ const store = {
   recorder: null,
   stream: null,
   chunks: [],
+  audioBlob: null,
+  recordingReady: false,
+  stopPromise: null,
   startedAt: null,
   timer: null,
   selectedPatientId: null
@@ -88,17 +91,35 @@ function setRecordingUi(recording, paused = false) {
   $('#btnStartRecord').disabled = recording && !paused
   $('#btnPauseRecord').disabled = !recording
   $('#btnStopRecord').disabled = !recording
-  $('#btnGateSample').disabled = store.chunks.length === 0
-  $('#btnFullTranscribe').disabled = store.chunks.length === 0 || !store.gate?.medical
+  $('#btnGateSample').disabled = recording || !store.recordingReady || !store.audioBlob?.size
+  $('#btnFullTranscribe').disabled = recording || !store.recordingReady || !store.audioBlob?.size || !store.gate?.medical
 }
 
 async function blobToBytes(blob) {
   return Array.from(new Uint8Array(await blob.arrayBuffer()))
 }
 
+async function ensureRecordingReady() {
+  if (store.recorder && store.recorder.state !== 'inactive') {
+    stopRecording()
+  }
+  if (store.stopPromise) await store.stopPromise
+  if (!store.audioBlob && store.chunks.length) {
+    store.audioBlob = new Blob(store.chunks, { type: store.chunks[0]?.type || 'audio/webm' })
+    store.recordingReady = store.audioBlob.size > 0
+  }
+  if (!store.recordingReady || !store.audioBlob?.size) {
+    throw new Error('Audio vazio. Grave, encerre e tente validar novamente.')
+  }
+}
+
 async function buildAudioPayload(sampleOnly = false) {
-  const chunks = sampleOnly ? store.chunks.slice(0, 12) : store.chunks
-  const blob = new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' })
+  await ensureRecordingReady()
+  const sourceBlob = store.audioBlob || new Blob(store.chunks, { type: store.chunks[0]?.type || 'audio/webm' })
+  if (!sourceBlob.size) throw new Error('Audio vazio. Encerre a gravacao e tente validar novamente.')
+  const blob = sampleOnly
+    ? sourceBlob.slice(0, Math.min(sourceBlob.size, 900000), sourceBlob.type || 'audio/webm')
+    : sourceBlob
   return {
     audioBytes: await blobToBytes(blob),
     mimeType: blob.type || 'audio/webm',
@@ -121,18 +142,30 @@ async function startRecording() {
 
   store.stream = await navigator.mediaDevices.getUserMedia({ audio: true })
   store.chunks = []
+  store.audioBlob = null
+  store.recordingReady = false
+  store.stopPromise = null
   store.gate = null
-  store.recorder = new MediaRecorder(store.stream, { mimeType: 'audio/webm' })
+  const preferredMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
+  store.recorder = new MediaRecorder(store.stream, { mimeType: preferredMime })
   store.recorder.ondataavailable = (event) => {
     if (event.data?.size) store.chunks.push(event.data)
-    $('#btnGateSample').disabled = store.chunks.length === 0
   }
   store.recorder.onstop = () => {
     store.stream?.getTracks().forEach((track) => track.stop())
+    store.audioBlob = new Blob(store.chunks, { type: store.recorder?.mimeType || preferredMime })
+    store.recordingReady = store.audioBlob.size > 0
     setRecordingUi(false)
-    $('#recordStatus').textContent = 'Gravacao encerrada'
+    $('#recordStatus').textContent = store.recordingReady ? 'Gravacao encerrada' : 'Gravacao sem audio'
+    status(
+      $('#gateStatus'),
+      store.recordingReady
+        ? `Audio pronto (${Math.round(store.audioBlob.size / 1024)} KB). Clique em Validar assunto.`
+        : 'Nenhum audio foi capturado. Tente gravar novamente.',
+      store.recordingReady ? 'status-ok' : 'status-error'
+    )
   }
-  store.recorder.start(5000)
+  store.recorder.start(1000)
   store.startedAt = Date.now()
   store.timer = setInterval(() => {
     $('#recordTimer').textContent = formatTimer(Date.now() - store.startedAt)
@@ -157,11 +190,21 @@ function pauseRecording() {
 function stopRecording() {
   if (!store.recorder) return
   clearInterval(store.timer)
-  if (store.recorder.state !== 'inactive') store.recorder.stop()
+  if (store.recorder.state === 'inactive') return
+  $('#recordStatus').textContent = 'Finalizando audio...'
+  $('#btnPauseRecord').disabled = true
+  $('#btnStopRecord').disabled = true
+  try {
+    store.recorder.requestData()
+  } catch (error) {}
+  store.stopPromise = new Promise((resolve) => {
+    store.recorder.addEventListener('stop', resolve, { once: true })
+  })
+  store.recorder.stop()
 }
 
 async function validateSample() {
-  status($('#gateStatus'), 'Transcrevendo amostra e validando assunto medico...', 'status-warn')
+  status($('#gateStatus'), 'Preparando audio e validando assunto medico...', 'status-warn')
   const payload = await buildAudioPayload(true)
   const sample = await window.medvozApi.transcribeAudio(payload)
   if (!sample.ok) {
@@ -180,8 +223,9 @@ async function validateSample() {
 }
 
 async function transcribeFull() {
-  status($('#gateStatus'), 'Transcrevendo audio completo com IA...', 'status-warn')
+  status($('#gateStatus'), 'Preparando audio completo para transcricao...', 'status-warn')
   const payload = await buildAudioPayload(false)
+  status($('#gateStatus'), 'Transcrevendo audio completo com IA...', 'status-warn')
   const result = await window.medvozApi.transcribeAudio(payload)
   if (!result.ok) {
     status($('#gateStatus'), result.message || 'Falha na transcricao completa.', 'status-error')
@@ -366,6 +410,14 @@ async function renderLicenseBox() {
   ].join('\n')
 }
 
+async function renderOpenAiStatus() {
+  const result = await window.medvozApi.getOpenAiStatus()
+  const el = $('#openaiStatus')
+  if (!el) return
+  el.textContent = result.configured ? `Chave configurada: ${result.masked}` : 'Chave OpenAI ainda nao configurada neste computador.'
+  el.className = `inline-status ${result.configured ? 'status-ok' : 'status-warn'}`
+}
+
 function renderAll() {
   renderDashboard()
   renderPatients($('#patientSearch')?.value || '')
@@ -440,6 +492,15 @@ function bindEvents() {
       tone: $('#tone').value
     }
     saveStore()
+    const key = $('#openaiKey')?.value.trim()
+    if (key) {
+      window.medvozApi.saveOpenAiKey(key).then((result) => {
+        $('#openaiKey').value = ''
+        const el = $('#openaiStatus')
+        el.textContent = result.ok ? `Chave salva: ${result.masked}` : (result.message || 'Nao foi possivel salvar a chave.')
+        el.className = `inline-status ${result.ok ? 'status-ok' : 'status-error'}`
+      })
+    }
   })
   $('#btnDemo').addEventListener('click', () => {
     $('#patientName').value = 'Marina Alves'
@@ -494,6 +555,7 @@ async function initializeApp() {
   renderSettings()
   renderAll()
   renderLicenseBox()
+  renderOpenAiStatus()
   checkUpdates()
 }
 

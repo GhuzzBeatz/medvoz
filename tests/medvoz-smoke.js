@@ -8,6 +8,7 @@ const files = [
   'app.config.js',
   'index.html',
   'js/app.js',
+  'js/mic-visualizer.js',
   'js/license.js',
   'services/license-service.js',
   'pages/licenca.html',
@@ -29,6 +30,7 @@ const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8')
 
 if (!main.includes('requestSingleInstanceLock')) throw new Error('Single-instance lock ausente.')
 if (!main.includes('OPENAI_API_KEY')) throw new Error('Leitura de chave OpenAI ausente.')
+if (!main.includes('ai:save-openai-key')) throw new Error('Configuracao local de chave OpenAI ausente.')
 if (!main.includes('audio/transcriptions')) throw new Error('Transcricao OpenAI ausente.')
 if (!main.includes('gpt-4o-transcribe-diarize')) throw new Error('Diarizacao ausente.')
 if (!main.includes('isSessionAuthorized')) throw new Error('Gate de licenca ausente.')
@@ -37,6 +39,7 @@ if (!index.includes('data-page-panel="atendimento"')) throw new Error('Tela Aten
 if (!index.includes('data-page-panel="atualizacoes"')) throw new Error('Tela Atualizacoes ausente.')
 if (!app.includes('navigator.mediaDevices.getUserMedia')) throw new Error('Gravacao por microfone ausente.')
 if (!app.includes('validateSample')) throw new Error('Triagem medica antes da transcricao ausente.')
+if (!app.includes('ensureRecordingReady')) throw new Error('Finalizacao segura do audio ausente.')
 if (!config.includes("appId: 'medvoz'")) throw new Error('appId publico incorreto.')
 if (!gitignore.includes('.env.*')) throw new Error('Arquivos .env devem ser ignorados.')
 

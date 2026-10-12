@@ -1,5 +1,5 @@
 :root {
-  --accent: #f97316;
+  --accent: #16a085;
 }
 
 * {
@@ -13,7 +13,7 @@ body {
   margin: 0;
   overflow: hidden;
   font-family: Inter, "Segoe UI", Arial, sans-serif;
-  background: #0d111b;
+  background: radial-gradient(60% 50% at 50% 0%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%), #0b1315;
   color: #f8fafc;
 }
 
@@ -57,9 +57,9 @@ input {
 .license-card {
   width: min(390px, 100%);
   padding: 30px;
-  border: 1px solid #2a3852;
+  border: 1px solid #1f3034;
   border-radius: 16px;
-  background: #172135;
+  background: #111c1f;
   box-shadow: 0 22px 60px rgba(0, 0, 0, .35);
 }
 
@@ -115,10 +115,10 @@ label {
 input {
   width: 100%;
   padding: 11px 12px;
-  border: 1px solid #33435f;
+  border: 1px solid #23383c;
   border-radius: 8px;
   outline: 0;
-  background: #0d1422;
+  background: #0d1719;
   color: #fff;
   font-size: 12px;
 }
@@ -177,6 +177,6 @@ form button:disabled {
 }
 
 .support-link:hover {
-  color: #fed7aa;
+  color: color-mix(in srgb, var(--accent) 60%, #fff);
   text-decoration: underline;
 }

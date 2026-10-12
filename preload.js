@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('ghzApp', {
 })
 
 contextBridge.exposeInMainWorld('medvozApi', {
+  getOpenAiStatus: () => ipcRenderer.invoke('ai:get-openai-status'),
+  saveOpenAiKey: (value) => ipcRenderer.invoke('ai:save-openai-key', value),
   transcribeAudio: (payload) => ipcRenderer.invoke('ai:transcribe-audio', payload),
   classifyTranscript: (payload) => ipcRenderer.invoke('ai:classify-transcript', payload),
   generateClinicalDocument: (payload) => ipcRenderer.invoke('ai:generate-clinical-document', payload),
