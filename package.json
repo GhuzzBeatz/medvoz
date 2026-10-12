@@ -1,6 +1,6 @@
 {
   "name": "medvoz",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Assistente GHZ para transcricao medica, documentacao clinica e gestao de pacientes",
   "main": "main.js",
   "author": "GHZ Plugin",

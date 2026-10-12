@@ -292,6 +292,7 @@ async function reviewQuality() {
   const result = await window.medvozApi.analyzeClinicalQuality({
     transcript: $('#transcriptText').value,
     document: $('#clinicalDocument').value,
+    documentType: $('#documentType').value,
     context: getContext()
   })
   if (!result.ok) {
