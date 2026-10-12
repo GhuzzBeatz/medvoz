@@ -7,8 +7,9 @@ module.exports = Object.freeze({
   appId: 'medvoz',
   licensePrefix: 'MEDVOZ',
   licenseApiUrl: 'https://ghzplugin.com.br/api/ghz-license.php',
-  updateEndpoint: 'https://api.github.com/repos/GhuzzBeatz/medvoz/releases/latest',
-  downloadPage: 'https://github.com/GhuzzBeatz/medvoz/releases/latest',
+  updateEndpoint: 'https://wpkaaxarresldcstaatj.supabase.co/functions/v1/ghz-app-downloads?app=medvoz',
+  fallbackUpdateEndpoint: 'https://api.github.com/repos/GhuzzBeatz/medvoz/releases/latest',
+  downloadPage: 'https://wpkaaxarresldcstaatj.supabase.co/functions/v1/ghz-app-downloads?app=medvoz&download=1',
   transcriptionModel: 'gpt-4o-transcribe',
   reasoningModel: 'gpt-4.1-mini'
 })

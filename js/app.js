@@ -15,6 +15,8 @@ const store = {
   selectedPatientId: null
 }
 
+let latestUpdateUrl = ''
+
 const templates = [
   ['SOAP', 'Gere um registro SOAP objetivo com S, O, A e P. Destaque lacunas e itens a validar.'],
   ['Evolucao', 'Gere uma evolucao clinica de prontuario, direta e revisavel.'],
@@ -410,14 +412,6 @@ async function renderLicenseBox() {
   ].join('\n')
 }
 
-async function renderOpenAiStatus() {
-  const result = await window.medvozApi.getOpenAiStatus()
-  const el = $('#openaiStatus')
-  if (!el) return
-  el.textContent = result.configured ? `Chave configurada: ${result.masked}` : 'Chave OpenAI ainda nao configurada neste computador.'
-  el.className = `inline-status ${result.configured ? 'status-ok' : 'status-warn'}`
-}
-
 function renderAll() {
   renderDashboard()
   renderPatients($('#patientSearch')?.value || '')
@@ -436,14 +430,115 @@ function escapeHtml(value) {
 
 async function checkUpdates() {
   $('#updateStatus').textContent = 'Verificando atualizacoes...'
+  $('#btnOpenUpdate').disabled = true
   const result = await window.ghzApp.checkForUpdates()
   const asset = Array.isArray(result.assets) ? result.assets.find((item) => String(item.name || '').endsWith('.exe')) : null
+  const downloadUrl = result.download_url || result.downloadUrl || asset?.browser_download_url || result.html_url || result.downloadPage || store.config.downloadPage
+  latestUpdateUrl = downloadUrl || ''
+  $('#btnOpenUpdate').disabled = !latestUpdateUrl
+  updateDownloadButtonLabel(result)
   $('#updateStatus').textContent = [
     `Versao instalada: ${result.installedVersion || store.config.version}`,
     `Ultima disponivel: ${result.version || result.latest_version || result.tag_name || 'nao informada'}`,
-    `Download fixo: ${result.downloadUrl || result.download_url || asset?.browser_download_url || result.html_url || result.downloadPage || store.config.downloadPage}`,
+    `Fonte: ${result.source || 'nao informada'}`,
+    result.primary_error ? `Endpoint GHZ: ${result.primary_error}` : '',
+    `Download fixo: ${downloadUrl || 'indisponivel'}`,
     `Notas: ${result.notes || result.body || result.message || 'Sem notas disponiveis.'}`
-  ].join('\n')
+  ].filter(Boolean).join('\n')
+}
+
+async function openLatestUpdate() {
+  if (!latestUpdateUrl) await checkUpdates()
+  if (!latestUpdateUrl) return
+  await window.ghzApp.openExternal(latestUpdateUrl)
+}
+
+function applyOpenAiStatusToGate(result) {
+  if (!result?.configured) {
+    status($('#gateStatus'), 'OPENAI_API_KEY nao configurada. Va em Ajustes, cole a chave OpenAI local e clique em Salvar ajustes.', 'status-warn')
+  } else if ($('#gateStatus').textContent.includes('OPENAI_API_KEY')) {
+    status($('#gateStatus'), 'Chave OpenAI configurada. Grave, encerre e valide o assunto.', 'status-ok')
+  }
+}
+
+async function refreshOpenAiStatusEverywhere() {
+  const result = await window.medvozApi.getOpenAiStatus()
+  const el = $('#openaiStatus')
+  if (el) {
+    el.textContent = result.configured ? `Chave configurada: ${result.masked}` : 'Chave OpenAI ainda nao configurada neste computador.'
+    el.className = `inline-status ${result.configured ? 'status-ok' : 'status-warn'}`
+  }
+  applyOpenAiStatusToGate(result)
+  return result
+}
+
+async function ensureOpenAiConfigured() {
+  const result = await refreshOpenAiStatusEverywhere()
+  return Boolean(result?.configured)
+}
+
+async function saveOpenAiKeyIfProvided() {
+  const key = $('#openaiKey')?.value.trim()
+  if (!key) {
+    await refreshOpenAiStatusEverywhere()
+    return
+  }
+  const result = await window.medvozApi.saveOpenAiKey(key)
+  $('#openaiKey').value = ''
+  const el = $('#openaiStatus')
+  el.textContent = result.ok ? `Chave salva: ${result.masked}` : (result.message || 'Nao foi possivel salvar a chave.')
+  el.className = `inline-status ${result.ok ? 'status-ok' : 'status-error'}`
+  applyOpenAiStatusToGate({ configured: Boolean(result.ok), masked: result.masked })
+  return result
+}
+
+async function renderOpenAiStatus() {
+  await refreshOpenAiStatusEverywhere()
+}
+
+async function guardedAction(action) {
+  if (!(await ensureOpenAiConfigured())) return
+  return action()
+}
+
+async function guardedValidateSample() {
+  return guardedAction(validateSample)
+}
+
+async function guardedTranscribeFull() {
+  return guardedAction(transcribeFull)
+}
+
+async function guardedGenerateDocument() {
+  return guardedAction(generateDocument)
+}
+
+async function guardedReviewQuality() {
+  return guardedAction(reviewQuality)
+}
+
+async function guardedAskAgent() {
+  return guardedAction(askAgent)
+}
+
+function normalizeUpdateVersion(value) {
+  return String(value || '').replace(/^v/i, '')
+}
+
+function compareVersions(a, b) {
+  const left = normalizeUpdateVersion(a).split('.').map(Number)
+  const right = normalizeUpdateVersion(b).split('.').map(Number)
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const diff = (left[index] || 0) - (right[index] || 0)
+    if (diff) return diff
+  }
+  return 0
+}
+
+function updateDownloadButtonLabel(result) {
+  const latest = result.version || result.latest_version || result.tag_name || ''
+  const installed = result.installedVersion || store.config.version
+  $('#btnOpenUpdate').textContent = latest && compareVersions(latest, installed) > 0 ? 'Baixar atualizacao' : 'Abrir download'
 }
 
 async function askAgent() {
@@ -472,18 +567,19 @@ function bindEvents() {
   $('#btnStartRecord').addEventListener('click', () => startRecording().catch((error) => status($('#gateStatus'), error.message, 'status-error')))
   $('#btnPauseRecord').addEventListener('click', pauseRecording)
   $('#btnStopRecord').addEventListener('click', stopRecording)
-  $('#btnGateSample').addEventListener('click', () => validateSample().catch((error) => status($('#gateStatus'), error.message, 'status-error')))
-  $('#btnFullTranscribe').addEventListener('click', () => transcribeFull().catch((error) => status($('#gateStatus'), error.message, 'status-error')))
-  $('#btnGenerateDoc').addEventListener('click', () => generateDocument())
-  $('#btnQuality').addEventListener('click', () => reviewQuality())
+  $('#btnGateSample').addEventListener('click', () => guardedValidateSample().catch((error) => status($('#gateStatus'), error.message, 'status-error')))
+  $('#btnFullTranscribe').addEventListener('click', () => guardedTranscribeFull().catch((error) => status($('#gateStatus'), error.message, 'status-error')))
+  $('#btnGenerateDoc').addEventListener('click', () => guardedGenerateDocument())
+  $('#btnQuality').addEventListener('click', () => guardedReviewQuality())
   $('#btnCopyDoc').addEventListener('click', () => navigator.clipboard.writeText($('#clinicalDocument').value))
   $('#btnSaveVisit').addEventListener('click', saveVisit)
   $('#btnCheckUpdates').addEventListener('click', checkUpdates)
-  $('#btnAskAgent').addEventListener('click', askAgent)
+  $('#btnOpenUpdate').addEventListener('click', openLatestUpdate)
+  $('#btnAskAgent').addEventListener('click', guardedAskAgent)
   $('#btnPasteTranscript').addEventListener('click', async () => {
     $('#transcriptText').value = await navigator.clipboard.readText()
   })
-  $('#btnSaveSettings').addEventListener('click', () => {
+  $('#btnSaveSettings').addEventListener('click', async () => {
     store.settings = {
       clinicName: $('#clinicName').value.trim(),
       doctorName: $('#doctorName').value.trim(),
@@ -492,15 +588,7 @@ function bindEvents() {
       tone: $('#tone').value
     }
     saveStore()
-    const key = $('#openaiKey')?.value.trim()
-    if (key) {
-      window.medvozApi.saveOpenAiKey(key).then((result) => {
-        $('#openaiKey').value = ''
-        const el = $('#openaiStatus')
-        el.textContent = result.ok ? `Chave salva: ${result.masked}` : (result.message || 'Nao foi possivel salvar a chave.')
-        el.className = `inline-status ${result.ok ? 'status-ok' : 'status-error'}`
-      })
-    }
+    await saveOpenAiKeyIfProvided()
   })
   $('#btnDemo').addEventListener('click', () => {
     $('#patientName').value = 'Marina Alves'

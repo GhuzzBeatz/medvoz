@@ -104,7 +104,10 @@ function isSupportUrl(url) {
 }
 
 function isAllowedExternalUrl(url) {
-  return isSupportUrl(url) || /^https:\/\/ghzplugin\.com\.br(?:\/|$)/i.test(String(url || ''))
+  return isSupportUrl(url)
+    || /^https:\/\/ghzplugin\.com\.br(?:\/|$)/i.test(String(url || ''))
+    || /^https:\/\/wpkaaxarresldcstaatj\.supabase\.co\/functions\/v1\/ghz-app-downloads(?:\/|\?|$)/i.test(String(url || ''))
+    || /^https:\/\/github\.com\/GhuzzBeatz\/medvoz(?:\/|$)/i.test(String(url || ''))
 }
 
 function isLicensePage(url) {
@@ -368,8 +371,17 @@ ipcMain.handle('app:open-external', async (_event, url) => {
   return { ok: true }
 })
 ipcMain.handle('app:check-updates', async () => {
-  const result = await requestJson(config.updateEndpoint)
-  return { installedVersion: app.getVersion(), downloadPage: config.downloadPage, ...result }
+  const primary = await requestJson(config.updateEndpoint)
+  if (primary?.ok) return { installedVersion: app.getVersion(), downloadPage: config.downloadPage, ...primary, source: 'ghz' }
+
+  const fallback = await requestJson(config.fallbackUpdateEndpoint)
+  return {
+    installedVersion: app.getVersion(),
+    downloadPage: config.downloadPage,
+    primary_error: primary?.message || primary?.code || 'Endpoint GHZ indisponivel.',
+    ...fallback,
+    source: fallback?.tag_name ? 'github' : 'fallback'
+  }
 })
 ipcMain.handle('ai:get-openai-status', async () => getOpenAiStatus())
 ipcMain.handle('ai:save-openai-key', async (_event, value) => saveOpenAiKey(value))
