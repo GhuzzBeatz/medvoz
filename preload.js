@@ -19,5 +19,7 @@ contextBridge.exposeInMainWorld('medvozApi', {
   transcribeAudio: (payload) => ipcRenderer.invoke('ai:transcribe-audio', payload),
   classifyTranscript: (payload) => ipcRenderer.invoke('ai:classify-transcript', payload),
   generateClinicalDocument: (payload) => ipcRenderer.invoke('ai:generate-clinical-document', payload),
-  analyzeClinicalQuality: (payload) => ipcRenderer.invoke('ai:analyze-clinical-quality', payload)
+  analyzeClinicalQuality: (payload) => ipcRenderer.invoke('ai:analyze-clinical-quality', payload),
+  exportPdf: (payload) => ipcRenderer.invoke('document:export-pdf', payload),
+  printDocument: (payload) => ipcRenderer.invoke('document:print', payload)
 })

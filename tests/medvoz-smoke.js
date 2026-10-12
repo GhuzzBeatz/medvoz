@@ -9,6 +9,9 @@ const files = [
   'index.html',
   'js/app.js',
   'js/mic-visualizer.js',
+  'js/live-transcription.js',
+  'js/ui-kit.js',
+  'js/features.js',
   'js/license.js',
   'services/license-service.js',
   'pages/licenca.html',
@@ -49,6 +52,9 @@ if (!app.includes('getClinicianDraft')) throw new Error('Dados fixos do medico a
 if (!app.includes('guardedValidateSample')) throw new Error('Validacao sem gate OpenAI local.')
 if (!config.includes("appId: 'medvoz'")) throw new Error('appId publico incorreto.')
 if (!config.includes('ghz-app-downloads?app=medvoz')) throw new Error('Endpoint central GHZ para MedVoz ausente.')
+if (!index.includes('js/features.js') || !index.includes('id="docEditor"') || !index.includes('data-page-panel="lixeira"')) throw new Error('Recursos do workspace ausentes no HTML.')
+if (!main.includes('document:export-pdf') || !preload.includes('exportPdf')) throw new Error('Exportacao de PDF ausente.')
+if (!main.includes('setDisplayMediaRequestHandler')) throw new Error('Captura do som do computador ausente.')
 if (!gitignore.includes('.env.*')) throw new Error('Arquivos .env devem ser ignorados.')
 
 process.stdout.write('MedVoz smoke test passed.\n')

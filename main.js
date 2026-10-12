@@ -5,7 +5,7 @@ const https = require('https')
 const os = require('os')
 const path = require('path')
 const { pathToFileURL } = require('url')
-const { app, BrowserWindow, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, shell } = require('electron')
 const config = require('./app.config')
 const { createLicenseService } = require('./services/license-service')
 
@@ -197,13 +197,32 @@ async function classifyTranscript({ transcript, context }) {
   return callMedVozAi('classify', { transcript: text, context: intake.context })
 }
 
-async function generateClinicalDocument({ transcript, context, patient, documentType, tone, detailLevel }) {
+function normalizeDocumentTemplate(template) {
+  const name = String(template?.name || '').trim().slice(0, 120)
+  const body = String(template?.body || '').trim().slice(0, 6000)
+  return name && body ? { name, body } : null
+}
+
+async function generateClinicalDocument({ transcript, context, patient, documentType, template, tone, detailLevel }) {
+  // The health gate always runs on the conversation alone, never on the doctor's template text.
   const gate = await classifyTranscript({ transcript, context })
   if (!gate.ok || !gate.medical || Number(gate.confidence || 0) < 0.55) {
     return { ok: false, blocked: true, message: 'Uso bloqueado: o conteudo nao parece ser relacionado a saude/medicina.' }
   }
 
-  const result = await callMedVozAi('generate_document', { transcript, context, patient, documentType, tone, detailLevel })
+  const customTemplate = normalizeDocumentTemplate(template)
+  const aiTranscript = customTemplate
+    ? `${transcript}\n\n---\nModelo do profissional "${customTemplate.name}". Monte o documento seguindo exatamente esta estrutura e estas instrucoes, sem inventar dados que nao foram falados:\n${customTemplate.body}`
+    : transcript
+  const result = await callMedVozAi('generate_document', {
+    transcript: aiTranscript,
+    context,
+    patient,
+    documentType,
+    ...(customTemplate ? { template: customTemplate } : {}),
+    tone,
+    detailLevel
+  })
   return result.ok ? { ...result, gate } : result
 }
 
@@ -251,6 +270,67 @@ ipcMain.handle('ai:classify-transcript', async (_event, payload) => classifyTran
 ipcMain.handle('ai:generate-clinical-document', async (_event, payload) => generateClinicalDocument(payload))
 ipcMain.handle('ai:analyze-clinical-quality', async (_event, payload) => analyzeClinicalQuality(payload))
 
+const MAX_PRINT_HTML_BYTES = 12 * 1024 * 1024
+
+async function openPrintableWindow(html) {
+  const source = String(html || '')
+  if (!source || Buffer.byteLength(source, 'utf8') > MAX_PRINT_HTML_BYTES) throw new Error('Documento vazio ou grande demais para imprimir.')
+  // Hidden, script-free window that only renders the printable document.
+  const win = new BrowserWindow({
+    show: false,
+    webPreferences: { javascript: false, sandbox: true, contextIsolation: true, nodeIntegration: false }
+  })
+  win.webContents.on('will-navigate', (event) => event.preventDefault())
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  await win.loadURL(`data:text/html;charset=utf-8;base64,${Buffer.from(source, 'utf8').toString('base64')}`)
+  return win
+}
+
+function safePdfName(name) {
+  const cleaned = String(name || 'documento-medvoz').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 90)
+  return `${cleaned || 'documento-medvoz'}.pdf`
+}
+
+ipcMain.handle('document:export-pdf', async (_event, payload = {}) => {
+  if (!licenseService?.isSessionAuthorized()) return { ok: false, message: 'Valide a licenca para exportar documentos.' }
+  let win
+  try {
+    win = await openPrintableWindow(payload.html)
+    const pdf = await win.webContents.printToPDF({ printBackground: true, preferCSSPageSize: true })
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Salvar documento em PDF',
+      defaultPath: path.join(app.getPath('documents'), safePdfName(payload.fileName)),
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    })
+    if (canceled || !filePath) return { ok: false, canceled: true }
+    fs.writeFileSync(filePath, pdf)
+    shell.openPath(filePath)
+    return { ok: true, filePath }
+  } catch (error) {
+    return { ok: false, message: error.message || 'Falha ao gerar PDF.' }
+  } finally {
+    if (win && !win.isDestroyed()) win.destroy()
+  }
+})
+
+ipcMain.handle('document:print', async (_event, payload = {}) => {
+  if (!licenseService?.isSessionAuthorized()) return { ok: false, message: 'Valide a licenca para imprimir documentos.' }
+  let win
+  try {
+    win = await openPrintableWindow(payload.html)
+    const printWindow = win
+    return await new Promise((resolve) => {
+      printWindow.webContents.print({ silent: false, printBackground: true }, (success, reason) => {
+        resolve(success ? { ok: true } : { ok: false, canceled: reason === 'cancelled', message: reason || 'Impressao cancelada.' })
+      })
+    })
+  } catch (error) {
+    return { ok: false, message: error.message || 'Falha ao imprimir.' }
+  } finally {
+    if (win && !win.isDestroyed()) win.destroy()
+  }
+})
+
 ipcMain.on('window:minimize', () => mainWindow?.minimize())
 ipcMain.on('window:maximize', () => {
   if (!mainWindow) return
@@ -266,6 +346,22 @@ app.on('second-instance', () => {
   mainWindow.focus()
 })
 
+function enableSystemAudioCapture() {
+  // Lets "Microfone + som do computador" capture teleconsult audio (Windows loopback).
+  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+    if (!licenseService?.isSessionAuthorized()) {
+      callback({})
+      return
+    }
+    desktopCapturer.getSources({ types: ['screen'] })
+      .then((sources) => {
+        if (!sources.length) callback({})
+        else callback({ video: sources[0], audio: 'loopback' })
+      })
+      .catch(() => callback({}))
+  })
+}
+
 app.whenReady().then(async () => {
   const appDataDir = path.join(app.getPath('userData'), config.appId)
   licenseService = createLicenseService({
@@ -278,6 +374,7 @@ app.whenReady().then(async () => {
     os,
     requestJson
   })
+  enableSystemAudioCapture()
   createWindow()
   const result = await licenseService.validate()
   if (result?.ok) await mainWindow.loadFile(path.join(__dirname, 'index.html'))

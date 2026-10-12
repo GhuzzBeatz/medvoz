@@ -13,20 +13,45 @@ const store = {
   startedAt: null,
   timer: null,
   selectedPatientId: null,
-  autoProcessing: false
+  autoProcessing: false,
+  customTemplates: JSON.parse(localStorage.getItem('medvoz.templates') || '[]'),
+  trash: JSON.parse(localStorage.getItem('medvoz.trash') || '[]'),
+  agentChat: JSON.parse(localStorage.getItem('medvoz.agentChat') || '[]'),
+  editingTemplateId: null,
+  rawStreams: [],
+  mixContext: null,
+  importedFileName: null,
+  liveText: '',
+  liveGateOk: false,
+  finalTranscriptSet: false
 }
 
 let latestUpdateUrl = ''
 
+const TRASH_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>'
+const MAX_IMPORT_BYTES = 25 * 1024 * 1024
+const SLICEABLE_AUDIO = /webm|ogg|mpeg|mp3|wav|flac/i
+const AUDIO_TYPES_BY_EXTENSION = {
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  mp4: 'audio/mp4',
+  aac: 'audio/aac',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  webm: 'audio/webm',
+  flac: 'audio/flac'
+}
+
 const templates = [
-  ['SOAP', 'Gere um registro SOAP objetivo com S, O, A e P. Destaque lacunas e itens a validar.'],
-  ['Evolucao', 'Gere uma evolucao clinica de prontuario, direta e revisavel.'],
-  ['Receita/conduta', 'Prepare conduta, orientacoes e campos para prescricao sem inventar doses ausentes.'],
-  ['Atestado', 'Monte atestado com campos editaveis e linguagem profissional.'],
-  ['Encaminhamento', 'Gere encaminhamento com motivo, resumo clinico e pergunta ao especialista.'],
-  ['Solicitacao de exames', 'Liste exames sugeridos pelo contexto e justificativa clinica quando citada.'],
-  ['LME', 'Organize rascunho de LME com campos pendentes em destaque.'],
-  ['SP/SADT', 'Prepare guia SP/SADT em formato de rascunho conferivel.']
+  ['soap', 'SOAP', 'Gere um registro SOAP objetivo com S, O, A e P. Destaque lacunas e itens a validar.'],
+  ['evolucao', 'Evolucao', 'Gere uma evolucao clinica de prontuario, direta e revisavel.'],
+  ['receita', 'Receita/conduta', 'Prepare conduta, orientacoes e campos para prescricao sem inventar doses ausentes.'],
+  ['atestado', 'Atestado', 'Monte atestado com campos editaveis e linguagem profissional.'],
+  ['encaminhamento', 'Encaminhamento', 'Gere encaminhamento com motivo, resumo clinico e pergunta ao especialista.'],
+  ['exames', 'Solicitacao de exames', 'Liste exames sugeridos pelo contexto e justificativa clinica quando citada.'],
+  ['lme', 'LME', 'Organize rascunho de LME com campos pendentes em destaque.'],
+  ['spsadt', 'SP/SADT', 'Prepare guia SP/SADT em formato de rascunho conferivel.']
 ]
 
 const $ = (selector) => document.querySelector(selector)
@@ -40,6 +65,9 @@ function saveStore() {
   localStorage.setItem('medvoz.visits', JSON.stringify(store.visits.slice(0, 300)))
   localStorage.setItem('medvoz.patients', JSON.stringify(store.patients))
   localStorage.setItem('medvoz.settings', JSON.stringify(store.settings))
+  localStorage.setItem('medvoz.templates', JSON.stringify(store.customTemplates))
+  localStorage.setItem('medvoz.trash', JSON.stringify(store.trash))
+  localStorage.setItem('medvoz.agentChat', JSON.stringify(store.agentChat.slice(-60)))
 }
 
 function setTheme(theme) {
@@ -142,37 +170,138 @@ async function buildAudioPayload(sampleOnly = false) {
   await ensureRecordingReady()
   const sourceBlob = store.audioBlob || new Blob(store.chunks, { type: store.chunks[0]?.type || 'audio/webm' })
   if (!sourceBlob.size) throw new Error('Audio vazio. Encerre a gravacao e tente validar novamente.')
-  const blob = sampleOnly
+  // MP4/M4A keep their index at the end of the file, so a partial slice is not playable.
+  const canSlice = !store.importedFileName || SLICEABLE_AUDIO.test(sourceBlob.type || '')
+  const blob = sampleOnly && canSlice
     ? sourceBlob.slice(0, Math.min(sourceBlob.size, 900000), sourceBlob.type || 'audio/webm')
     : sourceBlob
+  const recordedName = sampleOnly ? 'amostra-medvoz.webm' : 'consulta-medvoz.webm'
   return {
     audioBytes: await blobToBytes(blob),
     mimeType: blob.type || 'audio/webm',
-    fileName: sampleOnly ? 'amostra-medvoz.webm' : 'consulta-medvoz.webm',
+    fileName: store.importedFileName ? `${sampleOnly ? 'amostra-' : ''}${store.importedFileName}` : recordedName,
     diarize: !sampleOnly,
     context: getContext()
   }
 }
 
-async function startRecording() {
+function checkClinicalIntake(action) {
   const context = getContext()
   if (!context.reason || !context.specialty || !context.visitType) {
-    status($('#gateStatus'), 'Preencha especialidade, tipo e motivo clinico antes de gravar.', 'status-error')
-    return
+    status($('#gateStatus'), `Preencha especialidade, tipo e motivo clinico antes de ${action}.`, 'status-error')
+    return false
   }
   if (!context.consent) {
-    status($('#gateStatus'), 'Confirme o consentimento antes de gravar.', 'status-error')
-    return
+    status($('#gateStatus'), `Confirme o consentimento antes de ${action}.`, 'status-error')
+    return false
+  }
+  return true
+}
+
+function releaseCaptureStreams() {
+  store.rawStreams.forEach((stream) => stream.getTracks().forEach((track) => track.stop()))
+  store.rawStreams = []
+  if (store.mixContext) store.mixContext.close().catch(() => {})
+  store.mixContext = null
+}
+
+async function openRecordingStream() {
+  const mic = await navigator.mediaDevices.getUserMedia({ audio: true })
+  store.rawStreams = [mic]
+  if ($('#audioSource').value !== 'mixed') return mic
+
+  let system
+  try {
+    system = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true })
+  } catch (error) {
+    releaseCaptureStreams()
+    throw new Error('Nao foi possivel capturar o som do computador. Tente novamente ou use somente o microfone.')
+  }
+  system.getVideoTracks().forEach((track) => track.stop())
+  store.rawStreams.push(system)
+  if (!system.getAudioTracks().length) {
+    releaseCaptureStreams()
+    throw new Error('O som do computador nao foi liberado. Use somente o microfone ou tente novamente.')
   }
 
-  store.stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+  // Mix doctor (microphone) and remote patient (system audio) into one recording track.
+  store.mixContext = new AudioContext()
+  const destination = store.mixContext.createMediaStreamDestination()
+  store.mixContext.createMediaStreamSource(mic).connect(destination)
+  store.mixContext.createMediaStreamSource(new MediaStream(system.getAudioTracks())).connect(destination)
+  return destination.stream
+}
+
+function setLiveUi(active) {
+  $('#liveBadge').hidden = !active
+  if (!active) return
+  $('#liveStatus').hidden = false
+}
+
+function liveStatus(text, className = '') {
+  const el = $('#liveStatus')
+  el.hidden = !text
+  status(el, text, className)
+  el.classList.add('live-status')
+}
+
+function startLiveTranscription(stream) {
+  store.liveText = ''
+  store.liveGateOk = false
+  if (!$('#liveToggle').checked || !window.MedVozLive) {
+    liveStatus('')
+    return
+  }
+  setLiveUi(true)
+  window.MedVozLive.start(stream, {
+    getContext,
+    onText: (text) => {
+      store.liveText = text
+      store.liveGateOk = true
+      if (store.finalTranscriptSet) return
+      const area = $('#transcriptText')
+      const atBottom = area.scrollTop + area.clientHeight >= area.scrollHeight - 24
+      area.value = text
+      if (atBottom) area.scrollTop = area.scrollHeight
+    },
+    onStatus: (text, className) => liveStatus(text, className),
+    onBlocked: (message) => {
+      store.liveText = ''
+      store.liveGateOk = false
+      $('#transcriptText').value = ''
+      setLiveUi(false)
+      liveStatus(message, 'status-error')
+    }
+  })
+}
+
+async function finishLiveTranscription() {
+  if (!window.MedVozLive) return
+  const result = await window.MedVozLive.stop()
+  store.liveText = result.text
+  store.liveGateOk = result.gateOk
+  $('#liveBadge').hidden = true
+  if (!store.finalTranscriptSet && result.gateOk && result.text) $('#transcriptText').value = result.text
+}
+
+async function startRecording() {
+  if (!checkClinicalIntake('gravar')) return
+
+  window.MedVozLive?.cancel()
+  store.stream = await openRecordingStream()
   store.chunks = []
   store.audioBlob = null
   store.recordingReady = false
   store.stopPromise = null
   store.gate = null
   store.autoProcessing = false
+  store.importedFileName = null
+  store.finalTranscriptSet = false
   $('#transcriptText').value = ''
+  $('#btnPauseRecord').textContent = 'Pausar'
+  $('#btnImportAudio').disabled = true
+  $('#audioSource').disabled = true
+  $('#liveToggle').disabled = true
   const preferredMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
   store.recorder = new MediaRecorder(store.stream, { mimeType: preferredMime })
   store.recorder.ondataavailable = (event) => {
@@ -180,6 +309,10 @@ async function startRecording() {
   }
   store.recorder.onstop = () => {
     store.stream?.getTracks().forEach((track) => track.stop())
+    releaseCaptureStreams()
+    $('#btnImportAudio').disabled = false
+    $('#audioSource').disabled = false
+    $('#liveToggle').disabled = false
     store.audioBlob = new Blob(store.chunks, { type: store.recorder?.mimeType || preferredMime })
     store.recordingReady = store.audioBlob.size > 0
     setRecordingUi(false)
@@ -191,6 +324,7 @@ async function startRecording() {
     }
   }
   store.recorder.start(1000)
+  startLiveTranscription(store.stream)
   store.startedAt = Date.now()
   store.timer = setInterval(() => {
     $('#recordTimer').textContent = formatTimer(Date.now() - store.startedAt)
@@ -203,10 +337,12 @@ function pauseRecording() {
   if (!store.recorder) return
   if (store.recorder.state === 'recording') {
     store.recorder.pause()
+    window.MedVozLive?.pause()
     $('#recordStatus').textContent = 'Gravacao pausada'
     $('#btnPauseRecord').textContent = 'Retomar'
   } else if (store.recorder.state === 'paused') {
     store.recorder.resume()
+    window.MedVozLive?.resume()
     $('#recordStatus').textContent = 'Gravando consulta'
     $('#btnPauseRecord').textContent = 'Pausar'
   }
@@ -226,6 +362,7 @@ function stopRecording() {
     store.recorder.addEventListener('stop', resolve, { once: true })
   })
   store.recorder.stop()
+  store.liveFinish = finishLiveTranscription().catch(() => {})
   store.stopPromise
     .then(() => autoValidateAndTranscribe())
     .catch((error) => status($('#gateStatus'), error.message || 'Falha ao finalizar audio.', 'status-error'))
@@ -257,16 +394,24 @@ async function transcribeFull() {
   status($('#gateStatus'), 'Transcrevendo audio completo com IA...', 'status-warn')
   const result = await window.medvozApi.transcribeAudio(payload)
   if (!result.ok) {
+    if (store.liveFinish) await store.liveFinish
+    if (store.liveGateOk && store.liveText) {
+      $('#transcriptText').value = store.liveText
+      status($('#gateStatus'), `${result.message || 'Falha na transcricao completa.'} Mantida a transcricao ao vivo (sem separacao por participante).`, 'status-warn')
+      return
+    }
     status($('#gateStatus'), result.message || 'Falha na transcricao completa.', 'status-error')
     return
   }
   const gate = await window.medvozApi.classifyTranscript({ transcript: result.text, context: getContext() })
   store.gate = gate
   if (!gate.ok || !gate.medical) {
+    store.finalTranscriptSet = true
     $('#transcriptText').value = ''
     status($('#gateStatus'), gate.message || 'Nao foi encontrado assunto especifico de medicina/saude. A transcricao nao foi liberada.', 'status-error')
     return
   }
+  store.finalTranscriptSet = true
   $('#transcriptText').value = renderTranscript(result)
   status($('#gateStatus'), 'Transcricao completa liberada para documentacao clinica.', 'status-ok')
   return result
@@ -277,14 +422,21 @@ async function autoValidateAndTranscribe() {
   store.autoProcessing = true
   try {
     if (!(await ensureOpenAiConfigured())) return
-    $('#transcriptText').value = ''
+    // Keep the approved live text on screen while the final transcription is prepared.
+    if (!store.liveGateOk) $('#transcriptText').value = ''
     status($('#gateStatus'), 'Validando se o audio e de atendimento em saude...', 'status-warn')
     const gate = await validateSample()
-    if (!gate?.ok || !gate.medical) return
+    if (!gate?.ok || !gate.medical) {
+      if (gate && gate.medical === false) {
+        store.finalTranscriptSet = true
+        $('#transcriptText').value = ''
+      }
+      return
+    }
     status($('#gateStatus'), 'Assunto de saude confirmado. Transcrevendo conversa completa...', 'status-warn')
     await transcribeFull()
   } catch (error) {
-    $('#transcriptText').value = ''
+    if (!store.liveGateOk) $('#transcriptText').value = ''
     status(
       $('#gateStatus'),
       error.message || 'Nao foi possivel transcrever. A transcricao e exclusiva para assuntos de medicina/saude.',
@@ -294,6 +446,62 @@ async function autoValidateAndTranscribe() {
     store.autoProcessing = false
     setRecordingUi(false)
   }
+}
+
+function audioTypeFor(file) {
+  const extension = String(file.name || '').split('.').pop().toLowerCase()
+  if (file.type && !/^video\/mp4$/i.test(file.type)) return file.type
+  return AUDIO_TYPES_BY_EXTENSION[extension] || file.type || 'audio/webm'
+}
+
+function readAudioDuration(blob) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob)
+    const audio = new Audio()
+    const done = (value) => {
+      URL.revokeObjectURL(url)
+      resolve(value)
+    }
+    audio.preload = 'metadata'
+    audio.onloadedmetadata = () => done(Number.isFinite(audio.duration) ? audio.duration : 0)
+    audio.onerror = () => done(0)
+    audio.src = url
+  })
+}
+
+async function importAudioFile(file) {
+  if (!file) return
+  if (store.recorder && store.recorder.state !== 'inactive') {
+    status($('#gateStatus'), 'Encerre a gravacao atual antes de importar um audio.', 'status-error')
+    return
+  }
+  if (!checkClinicalIntake('importar o audio')) return
+  if (file.size > MAX_IMPORT_BYTES) {
+    status($('#gateStatus'), `Arquivo grande demais (${Math.round(file.size / 1048576)} MB). O limite e 25 MB por audio.`, 'status-error')
+    return
+  }
+
+  window.MedVozLive?.cancel()
+  const type = audioTypeFor(file)
+  store.audioBlob = new Blob([file], { type })
+  store.chunks = [store.audioBlob]
+  store.recordingReady = store.audioBlob.size > 0
+  store.importedFileName = file.name
+  store.stopPromise = null
+  store.gate = null
+  store.liveText = ''
+  store.liveGateOk = false
+  store.liveFinish = null
+  store.finalTranscriptSet = false
+  $('#liveBadge').hidden = true
+  liveStatus('')
+  $('#transcriptText').value = ''
+  $('#recordStatus').textContent = `Audio importado: ${file.name}`
+  const seconds = await readAudioDuration(store.audioBlob)
+  $('#recordTimer').textContent = seconds ? formatTimer(seconds * 1000) : '--:--'
+  setRecordingUi(false)
+  status($('#gateStatus'), `Audio importado (${Math.round(file.size / 1024)} KB). Validando e transcrevendo automaticamente...`, 'status-warn')
+  await autoValidateAndTranscribe()
 }
 
 function renderTranscript(result) {
@@ -313,12 +521,14 @@ async function generateDocument() {
     return
   }
   $('#clinicalDocument').value = 'Gerando documento clinico...'
+  const { documentType, template } = resolveDocumentType()
   const result = await window.medvozApi.generateClinicalDocument({
     transcript,
     context: getContext(),
     patient: getPatientDraft(),
     clinician: getClinicianDraft(),
-    documentType: $('#documentType').value,
+    documentType,
+    template: template ? { name: template.name, body: template.body } : null,
     tone: $('#tone').value,
     detailLevel: $('#detailLevel').value
   })
@@ -326,7 +536,7 @@ async function generateDocument() {
     $('#clinicalDocument').value = result.message || 'Falha ao gerar documento.'
     return
   }
-  $('#clinicalDocument').value = `${result.title}\n\n${result.document}${signatureBlock()}`
+  $('#clinicalDocument').value = `${template ? template.name : result.title}\n\n${result.document}${signatureBlock()}`
   renderQuality(result.gaps, result.warnings)
 }
 
@@ -344,7 +554,7 @@ async function reviewQuality() {
   const result = await window.medvozApi.analyzeClinicalQuality({
     transcript: $('#transcriptText').value,
     document: $('#clinicalDocument').value,
-    documentType: $('#documentType').value,
+    documentType: resolveDocumentType().documentType,
     context: getContext()
   })
   if (!result.ok) {
@@ -380,12 +590,34 @@ function saveVisit() {
     transcript: $('#transcriptText').value.trim(),
     documentType: $('#documentType').value,
     document: $('#clinicalDocument').value.trim(),
+    documentHtml: typeof getDocumentHtml === 'function' ? getDocumentHtml() : '',
     gate: store.gate
   }
   store.visits.unshift(visit)
+  store.selectedPatientId = patient.id
   saveStore()
   renderAll()
   switchPage('pacientes')
+  window.ui?.toast(`Atendimento de ${patient.name} salvo.`)
+}
+
+function openVisit(visitId) {
+  const visit = store.visits.find((item) => item.id === visitId)
+  if (!visit) return
+  const patient = store.patients.find((item) => item.id === visit.patientId)
+  const context = visit.context || {}
+  $('#patientName').value = patient?.name || context.patientName || ''
+  $('#patientAge').value = patient?.age || ''
+  $('#patientDoc').value = patient?.document || ''
+  $('#patientPhone').value = patient?.phone || ''
+  if (context.specialty) $('#specialty').value = context.specialty
+  if (context.visitType) $('#visitType').value = context.visitType
+  $('#visitReason').value = context.reason || ''
+  $('#recordConsent').checked = Boolean(context.consent)
+  $('#transcriptText').value = visit.transcript || ''
+  $('#clinicalDocument').value = visit.document || ''
+  if (visit.documentHtml && typeof setDocumentHtml === 'function') setDocumentHtml(visit.documentHtml)
+  switchPage('atendimento')
 }
 
 function renderDashboard() {
@@ -399,7 +631,8 @@ function renderDashboard() {
 
 function visitItem(visit) {
   const patient = store.patients.find((item) => item.id === visit.patientId)
-  return `<div class="list-item"><div><h3>${escapeHtml(patient?.name || visit.context.patientName || 'Paciente')}</h3><p>${visit.date} - ${escapeHtml(visit.context.specialty)} - ${escapeHtml(visit.context.visitType)}</p></div><button class="secondary-button compact" data-open-visit="${visit.id}">Abrir</button></div>`
+  const context = visit.context || {}
+  return `<div class="list-item"><div><h3>${escapeHtml(patient?.name || context.patientName || 'Paciente')}</h3><p>${escapeHtml(visit.date)} - ${escapeHtml(context.specialty)} - ${escapeHtml(context.visitType)}</p></div><div class="button-row"><button class="secondary-button compact" data-open-visit="${visit.id}">Abrir</button><button class="secondary-button compact icon-only danger-text" data-delete-visit="${visit.id}" title="Mover para a lixeira" aria-label="Mover atendimento para a lixeira">${TRASH_ICON}</button></div></div>`
 }
 
 function emptyItem(title, text) {
@@ -417,6 +650,11 @@ function renderPatients(filter = '') {
 
 function renderPatientDetail(patientId = store.selectedPatientId) {
   const patient = store.patients.find((item) => item.id === patientId)
+  if (typeof renderPatientRecord === 'function') {
+    store.selectedPatientId = patient ? patient.id : null
+    renderPatientRecord(patient)
+    return
+  }
   if (!patient) {
     $('#patientDetailTitle').textContent = 'Selecione um paciente'
     $('#patientDetail').textContent = 'O resumo, consultas e documentos aparecem aqui.'
@@ -431,18 +669,118 @@ function renderPatientDetail(patientId = store.selectedPatientId) {
     `Telefone: ${patient.phone || 'nao informado'}`,
     '',
     'Linha do tempo:',
-    ...visits.map((visit) => `- ${visit.date}: ${visit.context.specialty} / ${visit.context.reason}`)
+    ...visits.map((visit) => `- ${visit.date}: ${visit.context?.specialty || ''} / ${visit.context?.reason || ''}`)
   ].join('\n')
 }
 
+function baseTemplateTitle(value) {
+  return templates.find(([key]) => key === value)?.[1] || value
+}
+
+function resolveDocumentType() {
+  const value = $('#documentType').value
+  if (!value.startsWith('custom:')) return { documentType: value, template: null }
+  const template = store.customTemplates.find((item) => `custom:${item.id}` === value)
+  return template ? { documentType: template.base, template } : { documentType: 'soap', template: null }
+}
+
+function renderDocumentTypeOptions() {
+  const select = $('#documentType')
+  const current = select.value
+  select.querySelector('optgroup[data-custom]')?.remove()
+  if (store.customTemplates.length) {
+    const group = document.createElement('optgroup')
+    group.label = 'Meus modelos'
+    group.dataset.custom = 'true'
+    store.customTemplates.forEach((template) => {
+      const option = document.createElement('option')
+      option.value = `custom:${template.id}`
+      option.textContent = template.name
+      group.appendChild(option)
+    })
+    select.appendChild(group)
+  }
+  select.value = Array.from(select.options).some((option) => option.value === current) ? current : 'soap'
+}
+
 function renderTemplates() {
-  $('#templateGrid').innerHTML = templates.map(([title, prompt]) => `
-    <article class="template-card">
-      <h3>${title}</h3>
-      <p>${prompt}</p>
-      <button class="secondary-button compact" data-template="${title.toLowerCase()}">Usar</button>
+  const custom = store.customTemplates.map((template) => `
+    <article class="template-card is-custom">
+      <span class="template-tag">Meu modelo &middot; ${escapeHtml(baseTemplateTitle(template.base))}</span>
+      <h3>${escapeHtml(template.name)}</h3>
+      <p>${escapeHtml(template.body.length > 180 ? `${template.body.slice(0, 180)}...` : template.body)}</p>
+      <div class="button-row">
+        <button class="primary-button compact" data-template="custom:${template.id}">Usar</button>
+        <button class="secondary-button compact" data-edit-template="${template.id}">Editar</button>
+        <button class="secondary-button compact danger-text" data-delete-template="${template.id}">Excluir</button>
+      </div>
     </article>
   `).join('')
+  const builtIn = templates.map(([value, title, prompt]) => `
+    <article class="template-card">
+      <span class="template-tag">Modelo pronto</span>
+      <h3>${title}</h3>
+      <p>${prompt}</p>
+      <div class="button-row">
+        <button class="secondary-button compact" data-template="${value}">Usar</button>
+        <button class="secondary-button compact" data-customize-template="${value}">Personalizar</button>
+      </div>
+    </article>
+  `).join('')
+  $('#templateGrid').innerHTML = custom + builtIn
+  renderDocumentTypeOptions()
+}
+
+function openTemplateEditor(template = null, preset = null) {
+  store.editingTemplateId = template?.id || null
+  $('#templateEditorTitle').textContent = template ? 'Editar modelo' : 'Novo modelo'
+  $('#tplName').value = template?.name || preset?.name || ''
+  $('#tplBase').value = template?.base || preset?.base || 'soap'
+  $('#tplBody').value = template?.body || preset?.body || ''
+  status($('#tplStatus'), '')
+  $('#templateEditor').hidden = false
+  $('#templateEditor').scrollIntoView({ behavior: 'smooth', block: 'start' })
+  $('#tplName').focus()
+}
+
+function closeTemplateEditor() {
+  store.editingTemplateId = null
+  $('#templateEditor').hidden = true
+}
+
+function saveTemplate() {
+  const name = $('#tplName').value.trim()
+  const body = $('#tplBody').value.trim()
+  if (!name || !body) {
+    status($('#tplStatus'), 'Preencha o nome e a estrutura do modelo.', 'status-error')
+    return
+  }
+  const data = { name, base: $('#tplBase').value, body, updatedAt: new Date().toISOString() }
+  const existing = store.customTemplates.find((item) => item.id === store.editingTemplateId)
+  if (existing) Object.assign(existing, data)
+  else store.customTemplates.unshift({ id: Date.now(), ...data })
+  saveStore()
+  closeTemplateEditor()
+  renderTemplates()
+  renderAll()
+  window.ui?.toast(existing ? 'Modelo atualizado.' : 'Modelo criado. Ele ja aparece no Atendimento.')
+}
+
+async function deleteTemplate(id) {
+  const template = store.customTemplates.find((item) => item.id === id)
+  if (!template) return
+  const confirmed = await window.ui.confirm({
+    title: 'Excluir modelo?',
+    message: `O modelo "${template.name}" sera excluido. Documentos ja gerados com ele nao mudam.`,
+    confirmLabel: 'Excluir',
+    danger: true
+  })
+  if (!confirmed) return
+  store.customTemplates = store.customTemplates.filter((item) => item.id !== id)
+  saveStore()
+  renderTemplates()
+  renderAll()
+  window.ui.toast('Modelo excluido.')
 }
 
 function renderSettings() {
@@ -471,6 +809,7 @@ function renderAll() {
   renderDashboard()
   renderPatients($('#patientSearch')?.value || '')
   renderPatientDetail()
+  if (typeof renderExtras === 'function') renderExtras()
 }
 
 function escapeHtml(value) {
@@ -582,19 +921,8 @@ function updateDownloadButtonLabel(result) {
 }
 
 async function askAgent() {
-  const prompt = $('#agentPrompt').value.trim()
-  if (!prompt) return
-  $('#agentAnswer').textContent = 'Analisando contexto clinico...'
-  const result = await window.medvozApi.generateClinicalDocument({
-    transcript: `${$('#transcriptText').value}\n\nPergunta do agente: ${prompt}`,
-    context: getContext(),
-    patient: getPatientDraft(),
-    clinician: getClinicianDraft(),
-    documentType: 'analise_agente_clinico',
-    tone: $('#tone').value,
-    detailLevel: $('#detailLevel').value
-  })
-  $('#agentAnswer').textContent = result.ok ? `${result.title}\n\n${result.document}` : (result.message || 'Falha na analise.')
+  // The chat UI lives in features.js.
+  if (typeof sendAgentMessage === 'function') return sendAgentMessage()
 }
 
 function bindEvents() {
@@ -612,7 +940,10 @@ function bindEvents() {
   $('#btnFullTranscribe').addEventListener('click', () => guardedTranscribeFull().catch((error) => status($('#gateStatus'), error.message, 'status-error')))
   $('#btnGenerateDoc').addEventListener('click', () => guardedGenerateDocument())
   $('#btnQuality').addEventListener('click', () => guardedReviewQuality())
-  $('#btnCopyDoc').addEventListener('click', () => navigator.clipboard.writeText($('#clinicalDocument').value))
+  $('#btnCopyDoc').addEventListener('click', () => {
+    if (typeof copyDocument === 'function') return copyDocument()
+    return navigator.clipboard.writeText($('#clinicalDocument').value)
+  })
   $('#btnSaveVisit').addEventListener('click', saveVisit)
   $('#btnCheckUpdates').addEventListener('click', checkUpdates)
   $('#btnOpenUpdate').addEventListener('click', openLatestUpdate)
@@ -622,6 +953,7 @@ function bindEvents() {
   })
   $('#btnSaveSettings').addEventListener('click', async () => {
     store.settings = {
+      ...store.settings,
       clinicName: $('#clinicName').value.trim(),
       doctorName: $('#doctorName').value.trim(),
       doctorCrm: $('#doctorCrm').value.trim(),
@@ -631,6 +963,8 @@ function bindEvents() {
       tone: $('#tone').value
     }
     saveStore()
+    renderAll()
+    window.ui?.toast('Ajustes salvos.')
     await refreshOpenAiStatusEverywhere()
   })
   $('#btnDemo').addEventListener('click', () => {
@@ -648,28 +982,45 @@ function bindEvents() {
     renderPatientDetail(Number(button.dataset.openPatient))
   })
   $('#recentVisits').addEventListener('click', (event) => {
+    const remove = event.target.closest('[data-delete-visit]')
+    if (remove && typeof trashVisit === 'function') {
+      trashVisit(Number(remove.dataset.deleteVisit))
+      return
+    }
     const button = event.target.closest('[data-open-visit]')
     if (!button) return
-    const visit = store.visits.find((item) => item.id === Number(button.dataset.openVisit))
-    const patient = store.patients.find((item) => item.id === visit?.patientId)
-    if (!visit) return
-    $('#patientName').value = patient?.name || visit.context.patientName || ''
-    $('#patientAge').value = patient?.age || ''
-    $('#patientDoc').value = patient?.document || ''
-    $('#patientPhone').value = patient?.phone || ''
-    $('#specialty').value = visit.context.specialty
-    $('#visitType').value = visit.context.visitType
-    $('#visitReason').value = visit.context.reason
-    $('#recordConsent').checked = Boolean(visit.context.consent)
-    $('#transcriptText').value = visit.transcript
-    $('#clinicalDocument').value = visit.document
-    switchPage('atendimento')
+    openVisit(Number(button.dataset.openVisit))
   })
   $('#templateGrid').addEventListener('click', (event) => {
+    const edit = event.target.closest('[data-edit-template]')
+    if (edit) {
+      openTemplateEditor(store.customTemplates.find((item) => item.id === Number(edit.dataset.editTemplate)))
+      return
+    }
+    const remove = event.target.closest('[data-delete-template]')
+    if (remove) {
+      deleteTemplate(Number(remove.dataset.deleteTemplate))
+      return
+    }
+    const customize = event.target.closest('[data-customize-template]')
+    if (customize) {
+      const [value, title, prompt] = templates.find(([key]) => key === customize.dataset.customizeTemplate)
+      openTemplateEditor(null, { name: `${title} (meu modelo)`, base: value, body: prompt })
+      return
+    }
     const button = event.target.closest('[data-template]')
     if (!button) return
-    $('#documentType').value = button.dataset.template.includes('soap') ? 'soap' : $('#documentType').value
+    $('#documentType').value = button.dataset.template
     switchPage('atendimento')
+  })
+  $('#btnNewTemplate').addEventListener('click', () => openTemplateEditor())
+  $('#btnCancelTemplate').addEventListener('click', closeTemplateEditor)
+  $('#btnSaveTemplate').addEventListener('click', saveTemplate)
+  $('#btnImportAudio').addEventListener('click', () => $('#audioFile').click())
+  $('#audioFile').addEventListener('change', (event) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    importAudioFile(file).catch((error) => status($('#gateStatus'), error.message, 'status-error'))
   })
 }
 
