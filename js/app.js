@@ -455,9 +455,9 @@ async function openLatestUpdate() {
 
 function applyOpenAiStatusToGate(result) {
   if (!result?.configured) {
-    status($('#gateStatus'), 'OPENAI_API_KEY nao configurada. Va em Ajustes, cole a chave OpenAI local e clique em Salvar ajustes.', 'status-warn')
-  } else if ($('#gateStatus').textContent.includes('OPENAI_API_KEY')) {
-    status($('#gateStatus'), 'Chave OpenAI configurada. Grave, encerre e valide o assunto.', 'status-ok')
+    status($('#gateStatus'), result?.message || 'Servidor de IA nao configurado.', 'status-warn')
+  } else if ($('#gateStatus').textContent.includes('Servidor de IA')) {
+    status($('#gateStatus'), 'IA integrada pelo servidor GHZ. Grave, encerre e valide o assunto.', 'status-ok')
   }
 }
 
@@ -465,7 +465,7 @@ async function refreshOpenAiStatusEverywhere() {
   const result = await window.medvozApi.getOpenAiStatus()
   const el = $('#openaiStatus')
   if (el) {
-    el.textContent = result.configured ? `Chave configurada: ${result.masked}` : 'Chave OpenAI ainda nao configurada neste computador.'
+    el.textContent = result.message || (result.configured ? 'IA integrada pelo servidor GHZ.' : 'Servidor de IA nao configurado.')
     el.className = `inline-status ${result.configured ? 'status-ok' : 'status-warn'}`
   }
   applyOpenAiStatusToGate(result)
@@ -475,21 +475,6 @@ async function refreshOpenAiStatusEverywhere() {
 async function ensureOpenAiConfigured() {
   const result = await refreshOpenAiStatusEverywhere()
   return Boolean(result?.configured)
-}
-
-async function saveOpenAiKeyIfProvided() {
-  const key = $('#openaiKey')?.value.trim()
-  if (!key) {
-    await refreshOpenAiStatusEverywhere()
-    return
-  }
-  const result = await window.medvozApi.saveOpenAiKey(key)
-  $('#openaiKey').value = ''
-  const el = $('#openaiStatus')
-  el.textContent = result.ok ? `Chave salva: ${result.masked}` : (result.message || 'Nao foi possivel salvar a chave.')
-  el.className = `inline-status ${result.ok ? 'status-ok' : 'status-error'}`
-  applyOpenAiStatusToGate({ configured: Boolean(result.ok), masked: result.masked })
-  return result
 }
 
 async function renderOpenAiStatus() {
@@ -588,7 +573,7 @@ function bindEvents() {
       tone: $('#tone').value
     }
     saveStore()
-    await saveOpenAiKeyIfProvided()
+    await refreshOpenAiStatusEverywhere()
   })
   $('#btnDemo').addEventListener('click', () => {
     $('#patientName').value = 'Marina Alves'

@@ -149,11 +149,24 @@ function createLicenseService({ app, appId, licenseApiUrl, dataDir, crypto, fs, 
     }
   }
 
+  function getAiAuthPayload() {
+    const state = readState()
+    const device = getDeviceInfo()
+    return {
+      license_key: String(state.license_key || '').trim().toUpperCase(),
+      device_hash: device.device_hash,
+      device_name: device.device_name,
+      device_os: device.device_os,
+      app_version: device.app_version
+    }
+  }
+
   return {
     activate,
     validate,
     readState: () => publicState(),
     getPublicDeviceInfo,
+    getAiAuthPayload,
     isSessionAuthorized: () => sessionAuthorized
   }
 }

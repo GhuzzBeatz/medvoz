@@ -12,50 +12,18 @@ const { createLicenseService } = require('./services/license-service')
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 let mainWindow = null
 let licenseService = null
-let appDataDir = null
 const appRootUrl = pathToFileURL(`${__dirname}${path.sep}`).href
 const licensePageUrl = pathToFileURL(path.join(__dirname, 'pages', 'licenca.html')).href
 const SUPPORT_URL = 'https://ghzplugin.com.br/suporte/'
 
 if (!gotSingleInstanceLock) app.quit()
 
-function readEnvFile(filePath) {
-  if (!fs.existsSync(filePath)) return {}
-  const values = {}
-  const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/)
-  for (const line of lines) {
-    const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.+?)\s*$/)
-    if (!match) continue
-    values[match[1]] = match[2].replace(/^["']|["']$/g, '')
-  }
-  return values
-}
-
-function getOpenAiKey() {
-  const userEnvPath = appDataDir ? path.join(appDataDir, '.env.local') : ''
-  const userEnv = userEnvPath ? readEnvFile(userEnvPath) : {}
-  const env = readEnvFile(path.join(__dirname, '.env.local'))
-  return process.env.OPENAI_API_KEY || userEnv.OPENAI_API_KEY || env.OPENAI_API_KEY || ''
-}
-
-function maskSecret(value) {
-  const text = String(value || '')
-  if (!text) return ''
-  return `${text.slice(0, 7)}...${text.slice(-4)}`
-}
-
-function saveOpenAiKey(value) {
-  const key = String(value || '').trim()
-  if (!key) return { ok: false, message: 'Informe a chave OpenAI.' }
-  if (!/^sk-/.test(key)) return { ok: false, message: 'A chave OpenAI parece invalida.' }
-  fs.mkdirSync(appDataDir, { recursive: true })
-  fs.writeFileSync(path.join(appDataDir, '.env.local'), `OPENAI_API_KEY=${key}\n`, 'utf8')
-  return { ok: true, masked: maskSecret(key) }
-}
-
 function getOpenAiStatus() {
-  const key = getOpenAiKey()
-  return { configured: Boolean(key), masked: maskSecret(key) }
+  return {
+    configured: Boolean(config.aiProxyUrl),
+    mode: 'proxy',
+    message: config.aiProxyUrl ? 'IA integrada pelo servidor GHZ.' : 'Servidor de IA nao configurado.'
+  }
 }
 
 function requestJson(urlValue, payload, timeoutMs = 25000) {
@@ -152,23 +120,31 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'pages', 'licenca.html'))
 }
 
-async function callOpenAi(pathname, body, isMultipart = false) {
-  const apiKey = getOpenAiKey()
-  if (!apiKey) return { ok: false, code: 'missing_openai_key', message: 'OPENAI_API_KEY nao configurada.' }
+function bytesToBase64(bytes) {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || [])
+  return buffer.toString('base64')
+}
 
-  const response = await fetch(`https://api.openai.com/v1/${pathname}`, {
-    method: 'POST',
-    headers: isMultipart
-      ? { authorization: `Bearer ${apiKey}` }
-      : { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-    body: isMultipart ? body : JSON.stringify(body)
-  })
+async function callMedVozAi(action, payload = {}, timeoutMs = 180000) {
+  if (!config.aiProxyUrl) return { ok: false, code: 'missing_ai_proxy', message: 'Servidor de IA nao configurado.' }
+  if (!licenseService?.isSessionAuthorized()) return { ok: false, code: 'license_invalid', message: 'Valide a licenca para usar a IA.' }
 
-  const text = await response.text()
-  let data = {}
-  try { data = text ? JSON.parse(text) : {} } catch (error) { data = { text } }
-  if (!response.ok) return { ok: false, code: 'openai_error', message: data?.error?.message || `OpenAI HTTP ${response.status}` }
-  return { ok: true, data }
+  const result = await requestJson(config.aiProxyUrl, {
+    app: config.appId,
+    app_version: app.getVersion(),
+    action,
+    license: licenseService.getAiAuthPayload(),
+    payload
+  }, timeoutMs)
+
+  if (!result?.ok) {
+    return {
+      ok: false,
+      code: result?.error || result?.code || 'ai_proxy_error',
+      message: result?.message || 'Falha no servidor de IA.'
+    }
+  }
+  return result
 }
 
 function normalizeClinicalContext(context = {}) {
@@ -201,29 +177,15 @@ async function transcribeBuffer(payload) {
   const audioBuffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes)
   if (!audioBuffer.byteLength) return { ok: false, message: 'Audio vazio.' }
 
-  const form = new FormData()
   const mimeType = payload.mimeType || 'audio/webm'
   const fileName = payload.fileName || 'consulta.webm'
-  form.append('file', new Blob([audioBuffer], { type: mimeType }), fileName)
-  form.append('model', payload.diarize ? 'gpt-4o-transcribe-diarize' : config.transcriptionModel)
-  form.append('language', 'pt')
-  if (payload.diarize) {
-    form.append('response_format', 'diarized_json')
-  } else {
-    form.append('prompt', 'Transcreva em portugues do Brasil. O audio deve ser de consulta, reuniao clinica, odontologia, saude ocupacional, psicologia, prontuario, discussao de caso ou atendimento de saude.')
-  }
-
-  const result = await callOpenAi('audio/transcriptions', form, true)
-  if (!result.ok) return result
-  const data = result.data || {}
-  return {
-    ok: true,
-    text: data.text || '',
-    segments: data.segments || [],
-    language: data.language || 'pt',
-    duration: data.duration || null,
-    usage: data.usage || null
-  }
+  return callMedVozAi('transcribe', {
+    audioBase64: bytesToBase64(audioBuffer),
+    mimeType,
+    fileName,
+    diarize: Boolean(payload.diarize),
+    context: intake.context
+  })
 }
 
 async function classifyTranscript({ transcript, context }) {
@@ -232,45 +194,7 @@ async function classifyTranscript({ transcript, context }) {
   const text = String(transcript || '').trim()
   if (text.length < 20) return { ok: false, medical: false, message: 'Transcricao insuficiente para validar o assunto.' }
 
-  const result = await callOpenAi('responses', {
-    model: config.reasoningModel,
-    input: [
-      {
-        role: 'system',
-        content: 'Classifique se o texto pertence a medicina, odontologia, psicologia, saude ocupacional, reuniao clinica, prontuario, gestao de cuidado, faturamento/guia de saude ou area correlata. Responda somente JSON valido.'
-      },
-      {
-        role: 'user',
-        content: JSON.stringify({ context: intake.context, transcript: text.slice(0, 12000) })
-      }
-    ],
-    text: {
-      format: {
-        type: 'json_schema',
-        name: 'medical_gate',
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            medical: { type: 'boolean' },
-            confidence: { type: 'number' },
-            category: { type: 'string' },
-            reason: { type: 'string' }
-          },
-          required: ['medical', 'confidence', 'category', 'reason']
-        }
-      }
-    }
-  })
-  if (!result.ok) return result
-
-  const output = result.data?.output_text || result.data?.output?.[0]?.content?.[0]?.text || '{}'
-  try {
-    const parsed = JSON.parse(output)
-    return { ok: true, ...parsed }
-  } catch (error) {
-    return { ok: false, medical: false, message: 'Nao foi possivel validar o assunto da transcricao.' }
-  }
+  return callMedVozAi('classify', { transcript: text, context: intake.context })
 }
 
 async function generateClinicalDocument({ transcript, context, patient, documentType, tone, detailLevel }) {
@@ -279,85 +203,12 @@ async function generateClinicalDocument({ transcript, context, patient, document
     return { ok: false, blocked: true, message: 'Uso bloqueado: o conteudo nao parece ser relacionado a saude/medicina.' }
   }
 
-  const result = await callOpenAi('responses', {
-    model: config.reasoningModel,
-    input: [
-      {
-        role: 'system',
-        content: 'Voce e um assistente de documentacao clinica para profissionais de saude no Brasil. Gere rascunhos claros, revisaveis e sem inventar dados. Preserve incertezas, destaque lacunas, nao substitua julgamento clinico e nao crie diagnostico/conduta que nao esteja sustentado pelo texto.'
-      },
-      {
-        role: 'user',
-        content: JSON.stringify({
-          documentType,
-          tone,
-          detailLevel,
-          context,
-          patient,
-          transcript
-        })
-      }
-    ],
-    text: {
-      format: {
-        type: 'json_schema',
-        name: 'clinical_document',
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            title: { type: 'string' },
-            document: { type: 'string' },
-            gaps: { type: 'array', items: { type: 'string' } },
-            warnings: { type: 'array', items: { type: 'string' } },
-            suggestedFollowUp: { type: 'string' }
-          },
-          required: ['title', 'document', 'gaps', 'warnings', 'suggestedFollowUp']
-        }
-      }
-    }
-  })
-  if (!result.ok) return result
-
-  const output = result.data?.output_text || result.data?.output?.[0]?.content?.[0]?.text || '{}'
-  try {
-    return { ok: true, gate, ...JSON.parse(output) }
-  } catch (error) {
-    return { ok: false, message: 'Nao foi possivel montar o documento clinico.' }
-  }
+  const result = await callMedVozAi('generate_document', { transcript, context, patient, documentType, tone, detailLevel })
+  return result.ok ? { ...result, gate } : result
 }
 
 async function analyzeClinicalQuality({ transcript, document, context }) {
-  const result = await callOpenAi('responses', {
-    model: config.reasoningModel,
-    input: [
-      {
-        role: 'system',
-        content: 'Avalie qualidade de documentacao clinica. Procure lacunas, contradicoes, excesso de texto, itens medico-legais, plano pouco claro e campos ausentes. Responda JSON valido.'
-      },
-      { role: 'user', content: JSON.stringify({ transcript, document, context }) }
-    ],
-    text: {
-      format: {
-        type: 'json_schema',
-        name: 'quality_review',
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            score: { type: 'number' },
-            conciseSummary: { type: 'string' },
-            issues: { type: 'array', items: { type: 'string' } },
-            checklist: { type: 'array', items: { type: 'string' } }
-          },
-          required: ['score', 'conciseSummary', 'issues', 'checklist']
-        }
-      }
-    }
-  })
-  if (!result.ok) return result
-  const output = result.data?.output_text || result.data?.output?.[0]?.content?.[0]?.text || '{}'
-  try { return { ok: true, ...JSON.parse(output) } } catch (error) { return { ok: false, message: 'Falha ao avaliar qualidade.' } }
+  return callMedVozAi('quality_review', { transcript, document, context })
 }
 
 ipcMain.handle('app:get-config', () => ({ ...config, version: app.getVersion(), supportUrl: SUPPORT_URL }))
@@ -384,7 +235,6 @@ ipcMain.handle('app:check-updates', async () => {
   }
 })
 ipcMain.handle('ai:get-openai-status', async () => getOpenAiStatus())
-ipcMain.handle('ai:save-openai-key', async (_event, value) => saveOpenAiKey(value))
 
 ipcMain.handle('license:get-state', async () => licenseService.readState())
 ipcMain.handle('license:device-info', async () => licenseService.getPublicDeviceInfo())
@@ -417,7 +267,7 @@ app.on('second-instance', () => {
 })
 
 app.whenReady().then(async () => {
-  appDataDir = path.join(app.getPath('userData'), config.appId)
+  const appDataDir = path.join(app.getPath('userData'), config.appId)
   licenseService = createLicenseService({
     app,
     appId: config.appId,
