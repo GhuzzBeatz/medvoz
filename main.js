@@ -230,11 +230,12 @@ function clinicianInstructions(clinician, patient) {
     clinician?.doctorSpecialty && `Especialidade: ${clinician.doctorSpecialty}`,
     clinician?.clinicName && `Clinica: ${clinician.clinicName}`,
     patient?.name && patient.name !== 'Paciente sem nome' && `Paciente: ${patient.name}`,
-    patient?.age && `Idade do paciente: ${patient.age}`,
+    patient?.birthDate && `Data de nascimento do paciente: ${String(patient.birthDate).split('-').reverse().join('/')}`,
+    patient?.age && `Idade do paciente: ${patient.age} anos`,
     patient?.document && `Documento do paciente: ${patient.document}`,
     `Data de hoje: ${new Date().toLocaleDateString('pt-BR')}`
   ].filter(Boolean).map((line) => String(line).slice(0, 200))
-  return `\n\n---\nDados fixos para preencher o documento (use exatamente estes dados, sem deixar campos como [nome do medico], [CRM] ou ____ para preencher a mao):\n${lines.join('\n')}`
+  return `\n\n---\nDados fixos para preencher o documento (use exatamente estes dados, sem deixar campos como [nome do medico], [CRM] ou ____ para preencher a mao):\n${lines.join('\n')}\nNao escreva cabecalho, timbrado nem bloco de assinatura no final: o sistema adiciona o timbrado da clinica e a assinatura do profissional automaticamente. Se o nome do paciente nao foi informado, nao invente um nome.`
 }
 
 function normalizeDocumentTemplate(template) {
@@ -325,15 +326,11 @@ async function downloadAndInstallUpdate() {
   if (!result.ok) return result
   if (!app.isPackaged) return { ...result, dev: true }
 
-  // The installer cannot replace files while MedVoz is open: start it a moment after we quit.
-  const child = require('child_process').spawn('cmd.exe', ['/d', '/s', '/c', `"ping -n 3 127.0.0.1 >nul & start "" "${result.path}""`], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-    windowsVerbatimArguments: true
-  })
-  child.unref()
-  setTimeout(() => app.quit(), 800)
+  // Open the installer through Windows (no console window) and close MedVoz right away;
+  // the installer only checks for a running app when the user clicks Install.
+  const openError = await shell.openPath(result.path)
+  if (openError) return { ok: false, message: `Nao foi possivel abrir o instalador: ${openError}` }
+  setTimeout(() => app.quit(), 600)
   return result
 }
 ipcMain.handle('update:install', async () => {

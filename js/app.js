@@ -43,16 +43,104 @@ const AUDIO_TYPES_BY_EXTENSION = {
   flac: 'audio/flac'
 }
 
-const templates = [
-  ['soap', 'SOAP', 'Gere um registro SOAP objetivo com S, O, A e P. Destaque lacunas e itens a validar.'],
-  ['evolucao', 'Evolucao', 'Gere uma evolucao clinica de prontuario, direta e revisavel.'],
-  ['receita', 'Receita/conduta', 'Prepare conduta, orientacoes e campos para prescricao sem inventar doses ausentes.'],
-  ['atestado', 'Atestado', 'Monte atestado com campos editaveis e linguagem profissional.'],
-  ['encaminhamento', 'Encaminhamento', 'Gere encaminhamento com motivo, resumo clinico e pergunta ao especialista.'],
-  ['exames', 'Solicitacao de exames', 'Liste exames sugeridos pelo contexto e justificativa clinica quando citada.'],
-  ['lme', 'LME', 'Organize rascunho de LME com campos pendentes em destaque.'],
-  ['spsadt', 'SP/SADT', 'Prepare guia SP/SADT em formato de rascunho conferivel.']
-]
+// Every document type has a fixed structure sent to the AI, so the result is always complete
+// and consistent. `base` is the document type the GHZ AI server already knows.
+const DOCUMENT_TYPES = {
+  soap: {
+    title: 'SOAP', base: 'soap',
+    summary: 'Registro de prontuario com Subjetivo, Objetivo, Avaliacao e Plano.',
+    hint: 'Ex.: destacar sinais vitais, incluir CID',
+    structure: 'S (Subjetivo): queixa principal e historia relatada.\nO (Objetivo): exame fisico, sinais vitais e exames citados.\nA (Avaliacao): hipoteses diagnosticas.\nP (Plano): conduta, exames, prescricoes, orientacoes e retorno.\nUse apenas o que foi falado; escreva "nao informado" quando faltar dado.'
+  },
+  evolucao: {
+    title: 'Evolucao', base: 'evolucao',
+    summary: 'Evolucao clinica de prontuario, direta e revisavel.',
+    hint: 'Ex.: comparar com a consulta anterior',
+    structure: 'Evolucao clinica desde o ultimo atendimento.\nExame fisico.\nAvaliacao.\nConduta.\nRetorno.\nTexto objetivo, em topicos curtos.'
+  },
+  receita: {
+    title: 'Receita e conduta', base: 'receita',
+    summary: 'Receituario com posologia completa e orientacoes, sem inventar doses.',
+    hint: 'Ex.: dipirona 1 g de 6/6 h por 3 dias',
+    structure: 'Receituario em lista numerada. Para cada medicamento: nome e concentracao, via de uso, posologia (dose e frequencia), duracao e quantidade.\nSe a dose ou a duracao nao foi dita, escreva [definir] no lugar; nunca invente doses.\nDepois: orientacoes nao medicamentosas e retorno.'
+  },
+  atestado: {
+    title: 'Atestado', base: 'atestado',
+    summary: 'Atestado de afastamento em linguagem formal.',
+    hint: 'Ex.: 2 dias de afastamento, incluir CID',
+    structure: 'Texto formal de atestado: "Atesto, para os devidos fins, que [paciente] esteve sob meus cuidados nesta data e necessita de afastamento de suas atividades por N (numero por extenso) dia(s), a partir de [data]."\nInclua CID somente se o profissional pedir.\nSem detalhes clinicos alem do necessario. Use [preencher] para o que nao foi dito.'
+  },
+  encaminhamento: {
+    title: 'Encaminhamento', base: 'encaminhamento',
+    summary: 'Encaminhamento com motivo, resumo clinico e pergunta ao especialista.',
+    hint: 'Ex.: para cardiologia, prioridade alta',
+    structure: 'Para: especialidade ou servico.\nMotivo do encaminhamento.\nResumo clinico.\nExames ja realizados (se citados).\nSolicitacao ou pergunta ao especialista.\nPrioridade, se informada.'
+  },
+  exames: {
+    title: 'Solicitacao de exames', base: 'exames',
+    summary: 'Lista numerada dos exames com indicacao clinica.',
+    hint: 'Ex.: hemograma, TSH, ressonancia de cranio',
+    structure: 'Lista numerada com CADA exame solicitado, um por linha, com nome padronizado (ex.: 1. Hemograma completo).\nDepois: "Indicacao clinica:" com a justificativa e a hipotese diagnostica (CID se citado).\nSe nenhum exame especifico foi dito, liste os exames iniciais pertinentes ao quadro e escreva "(sugerido - confirmar)" ao lado de cada um.\nNao escreva paragrafos longos; o foco e a lista de exames.'
+  },
+  lme: {
+    title: 'LME', base: 'lme',
+    summary: 'Rascunho de LME com campos pendentes em destaque.',
+    hint: 'Ex.: medicamento e CID',
+    structure: 'Rascunho de LME (Laudo para Solicitacao de Medicamentos): medicamento(s) e quantidade por mes, CID-10, diagnostico, anamnese resumida, tratamentos previos.\nMarque com [preencher] os campos obrigatorios nao informados.'
+  },
+  spsadt: {
+    title: 'Guia SP/SADT', base: 'spsadt',
+    summary: 'Guia SP/SADT em formato de rascunho conferivel.',
+    hint: 'Ex.: convenio e procedimentos',
+    structure: 'Rascunho de guia SP/SADT: indicacao clinica, CID, procedimentos/exames solicitados em lista (com codigo TUSS se citado), carater (eletivo/urgencia).\nMarque com [preencher] os campos nao informados.'
+  },
+  aso: {
+    title: 'ASO - Saude ocupacional', base: 'atestado',
+    summary: 'Atestado de Saude Ocupacional com tipo de exame e conclusao apto/inapto.',
+    hint: 'Ex.: admissional, empresa X, funcao auxiliar, apto',
+    structure: 'Atestado de Saude Ocupacional (ASO), conforme NR-7:\nEmpresa e funcao do trabalhador.\nTipo de exame: admissional, periodico, retorno ao trabalho, mudanca de riscos ocupacionais ou demissional.\nRiscos ocupacionais.\nExames complementares realizados.\nConclusao: APTO ou INAPTO para a funcao.\nCampos de assinatura do medico examinador e do trabalhador.\nUse [preencher] para o que nao foi dito.'
+  },
+  retorno_trabalho: {
+    title: 'Retorno ao trabalho', base: 'atestado',
+    summary: 'Parecer de aptidao para retorno as atividades apos afastamento.',
+    hint: 'Ex.: apto a partir de segunda, sem esforco por 15 dias',
+    structure: 'Atestado de aptidao para retorno ao trabalho: o paciente foi avaliado nesta data apos afastamento (motivo e periodo, se citados) e encontra-se APTO ou INAPTO para retornar as atividades a partir de [data].\nRestricoes ou recomendacoes, se houver.\nUse [preencher] para o que nao foi dito.'
+  },
+  comparecimento: {
+    title: 'Declaracao de comparecimento', base: 'atestado',
+    summary: 'Declara que o paciente compareceu ao atendimento, com horario.',
+    hint: 'Ex.: das 14h as 15h, acompanhante: mae',
+    structure: 'Declaracao de comparecimento: declaro que [paciente] compareceu a atendimento nesta data, no periodo de [inicio] as [fim].\nSem diagnostico e sem CID.\nUse [preencher] para horarios nao informados.'
+  },
+  relatorio: {
+    title: 'Relatorio medico', base: 'evolucao',
+    summary: 'Relatorio completo do caso para pericia, convenio ou outro profissional.',
+    hint: 'Ex.: para pericia do INSS',
+    structure: 'Relatorio medico: historia clinica, exame fisico, exames realizados, diagnostico/hipoteses (CID se citado), tratamento realizado, situacao atual e recomendacoes.\nLinguagem formal e objetiva.'
+  },
+  orientacoes: {
+    title: 'Orientacoes ao paciente', base: 'evolucao',
+    summary: 'Orientacoes em linguagem simples para entregar ao paciente.',
+    hint: 'Ex.: dieta, como tomar o remedio',
+    structure: 'Orientacoes ao paciente em linguagem simples, em topicos curtos:\nO que e o problema.\nComo usar os medicamentos citados.\nCuidados em casa.\nSinais de alerta para procurar atendimento.\nQuando retornar.'
+  }
+}
+
+const templates = Object.entries(DOCUMENT_TYPES).map(([value, item]) => [value, item.title, item.summary])
+
+function ageFromBirth(birthDate) {
+  const date = birthDate ? new Date(`${birthDate}T00:00:00`) : null
+  if (!date || Number.isNaN(date.getTime())) return ''
+  const now = new Date()
+  let age = now.getFullYear() - date.getFullYear()
+  const beforeBirthday = now.getMonth() < date.getMonth() || (now.getMonth() === date.getMonth() && now.getDate() < date.getDate())
+  if (beforeBirthday) age -= 1
+  return age >= 0 && age < 130 ? String(age) : ''
+}
+
+function formatBirthDate(birthDate) {
+  return birthDate ? birthDate.split('-').reverse().join('/') : ''
+}
 
 const $ = (selector) => document.querySelector(selector)
 const $$ = (selector) => Array.from(document.querySelectorAll(selector))
@@ -95,14 +183,31 @@ function getContext() {
 }
 
 function getPatientDraft() {
+  // Only the fields typed in the Atendimento form; clinical data lives in the patient record.
+  const birthDate = $('#patientBirth').value
   return {
-    name: $('#patientName').value.trim() || 'Paciente sem nome',
-    age: $('#patientAge').value.trim(),
+    name: $('#patientName').value.trim(),
+    birthDate,
+    age: ageFromBirth(birthDate),
     document: $('#patientDoc').value.trim(),
     phone: $('#patientPhone').value.trim(),
-    allergies: '',
-    medications: '',
-    conditions: ''
+    specialty: $('#specialty').value
+  }
+}
+
+function getPatientForAi() {
+  // Patient data sent to the AI: form fields plus the clinical data already saved for this patient.
+  const draft = getPatientDraft()
+  const saved = currentVisitPatient() || store.patients.find((patient) => patient.key && patient.key === patientKey(draft))
+  return {
+    name: draft.name,
+    birthDate: draft.birthDate,
+    age: draft.age || saved?.age || '',
+    document: draft.document,
+    phone: draft.phone,
+    allergies: saved?.allergies || '',
+    medications: saved?.medications || '',
+    conditions: saved?.conditions || ''
   }
 }
 
@@ -136,29 +241,52 @@ function getClinicianDraft() {
   }
 }
 
+const SIGNATURE_RULE = '______________________________'
+
+function formatCrm(crm) {
+  const value = String(crm || '').trim()
+  return value && !/crm/i.test(value) ? `CRM ${value}` : value
+}
+
 function signatureBlock() {
+  // Signature area at the end of every document; the letterhead already carries the clinic.
   const clinician = getClinicianDraft()
-  const lines = [
-    clinician.doctorName,
-    clinician.doctorCrm,
-    clinician.doctorSpecialty,
-    clinician.clinicName,
-    clinician.footerText
-  ].filter(Boolean)
-  return lines.length ? `\n\n${lines.join('\n')}` : ''
+  const detail = [formatCrm(clinician.doctorCrm), clinician.doctorSpecialty].filter(Boolean).join(' · ')
+  const lines = [clinician.doctorName, detail].filter(Boolean)
+  return lines.length ? `\n\n${SIGNATURE_RULE}\n${lines.join('\n')}` : ''
+}
+
+function stripAiSignature(text) {
+  // The app adds its own signature; drop sign-off lines the AI may have written at the end.
+  const clinician = getClinicianDraft()
+  const markers = [clinician.doctorName, clinician.doctorCrm, clinician.doctorSpecialty, clinician.clinicName]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter((value) => value.length >= 3)
+  const lines = String(text || '').replace(/\s+$/, '').split('\n')
+  while (lines.length) {
+    const last = lines[lines.length - 1].trim().toLowerCase()
+    const isSignOff = !last
+      || /^_{3,}$/.test(last)
+      || /^(assinatura|carimbo)/.test(last)
+      || markers.some((marker) => last.includes(marker))
+    if (!isSignOff) break
+    lines.pop()
+  }
+  return lines.join('\n')
 }
 
 function fillDocumentPlaceholders(text) {
   // Safety net in case the AI still leaves blanks for data the app already knows.
   const clinician = getClinicianDraft()
-  const patient = getPatientDraft()
+  const patient = getPatientForAi()
   const known = [
     [/\[\s*(nome (do|da) (m[eé]dic[oa]|profissional)|m[eé]dic[oa]|profissional)\s*\]/gi, clinician.doctorName],
-    [/\[\s*(n[uú]mero (do|de) )?crm[^\]]*\]/gi, clinician.doctorCrm],
+    [/\[\s*(n[uú]mero (do|de) )?crm[^\]]*\]/gi, formatCrm(clinician.doctorCrm)],
     [/\[\s*especialidade[^\]]*\]/gi, clinician.doctorSpecialty],
     [/\[\s*(nome (da|do) )?(cl[ií]nica|consult[oó]rio|estabelecimento)\s*\]/gi, clinician.clinicName],
-    [/\[\s*(nome (do|da) )?paciente\s*\]/gi, patient.name !== 'Paciente sem nome' ? patient.name : ''],
-    [/\[\s*idade\s*\]/gi, patient.age],
+    [/\[\s*(nome (do|da) )?paciente\s*\]/gi, patient.name],
+    [/\[\s*data de nascimento\s*\]/gi, formatBirthDate(patient.birthDate)],
+    [/\[\s*idade\s*\]/gi, patient.age ? `${patient.age} anos` : ''],
     [/\[\s*(cpf|rg|documento)[^\]]*\]/gi, patient.document],
     [/\[\s*data( (de hoje|atual|do atendimento))?\s*\]/gi, today()]
   ]
@@ -362,6 +490,7 @@ async function applyTeleconsultTranscript(result) {
   store.liveGateOk = true
   $('#transcriptText').value = result.text
   status($('#gateStatus'), 'Transcricao da teleconsulta pronta: microfone = medico, som do computador = paciente.', 'status-ok')
+  saveVisit({ silent: true })
   setRecordingUi(false)
   return true
 }
@@ -415,6 +544,7 @@ async function startRecording() {
   store.gate = null
   store.autoProcessing = false
   store.importedFileName = null
+  startNewVisit()
   store.finalTranscriptSet = false
   $('#transcriptText').value = ''
   $('#btnPauseRecord').textContent = 'Pausar'
@@ -547,6 +677,7 @@ async function transcribeFull() {
   store.finalTranscriptSet = true
   $('#transcriptText').value = transcriptText
   status($('#gateStatus'), 'Transcricao completa liberada para documentacao clinica.', 'status-ok')
+  saveVisit({ silent: true })
   return result
 }
 
@@ -621,6 +752,7 @@ async function importAudioFile(file) {
   store.chunks = [store.audioBlob]
   store.recordingReady = store.audioBlob.size > 0
   store.importedFileName = file.name
+  startNewVisit()
   store.stopPromise = null
   store.gate = null
   store.liveText = ''
@@ -692,14 +824,14 @@ async function generateDocument() {
     return
   }
   $('#clinicalDocument').value = 'Gerando documento clinico...'
-  const { documentType, template } = resolveDocumentType()
+  const { documentType, template, isCustom } = resolveDocumentType()
   const result = await window.medvozApi.generateClinicalDocument({
     transcript,
     context: getContext(),
-    patient: getPatientDraft(),
+    patient: getPatientForAi(),
     clinician: getClinicianDraft(),
     documentType,
-    template: template ? { name: template.name, body: template.body } : null,
+    template,
     tone: $('#tone').value,
     detailLevel: $('#detailLevel').value
   })
@@ -707,11 +839,136 @@ async function generateDocument() {
     $('#clinicalDocument').value = result.message || 'Falha ao gerar documento.'
     return
   }
-  const body = fillDocumentPlaceholders(result.document || '')
-  const clinician = getClinicianDraft()
-  const alreadySigned = [clinician.doctorCrm, clinician.doctorName].some((value) => value && body.includes(value))
-  $('#clinicalDocument').value = `${template ? template.name : result.title}\n\n${body}${alreadySigned ? '' : signatureBlock()}`
+  const body = stripAiSignature(fillDocumentPlaceholders(result.document || ''))
+  const title = isCustom ? template.name : (result.title || template.name)
+  // Each generated document is a new entry in the visit history, saved automatically.
+  store.currentDocId = null
+  $('#clinicalDocument').value = `${title}\n\n${body}${signatureBlock()}`
   renderQuality(result.gaps, result.warnings)
+  saveVisit({ silent: true })
+}
+
+function patientKey(draft) {
+  return String(draft.document || draft.phone || draft.name || '').trim().toLowerCase()
+}
+
+function currentVisitPatient() {
+  const visit = store.visits.find((item) => item.id === store.currentVisitId)
+  return visit ? store.patients.find((patient) => patient.id === visit.patientId) || null : null
+}
+
+function upsertPatient(draft, preferredId = null) {
+  const key = patientKey(draft)
+  let patient = preferredId ? store.patients.find((item) => item.id === preferredId) : null
+  if (!patient && key) patient = store.patients.find((item) => item.key === key)
+  if (!patient) {
+    patient = { id: Date.now(), createdAt: new Date().toISOString() }
+    store.patients.unshift(patient)
+  }
+  // Never wipe saved data (allergies, medications...) with empty form fields.
+  Object.entries(draft).forEach(([field, value]) => {
+    if (value !== '' && value != null) patient[field] = value
+  })
+  patient.unnamed = !draft.name && !(patient.name && !patient.unnamed)
+  if (!patient.name || patient.unnamed) patient.name = draft.name || 'Paciente sem nome'
+  patient.key = key || `sem-nome-${patient.id}`
+  return patient
+}
+
+function documentTitleOf(text) {
+  return String(text || '').split('\n').map((line) => line.trim()).find(Boolean)?.slice(0, 90) || 'Documento'
+}
+
+function visitDocuments(visit) {
+  // Visits saved before 1.0.10 had a single document field.
+  if (!Array.isArray(visit.documents)) {
+    visit.documents = visit.document
+      ? [{ id: visit.id, type: visit.documentType || 'soap', title: documentTitleOf(visit.document), text: visit.document, html: visit.documentHtml || '', at: visit.createdAt || new Date(visit.id).toISOString() }]
+      : []
+  }
+  return visit.documents
+}
+
+function saveVisit({ silent = false } = {}) {
+  const draft = getPatientDraft()
+  const current = store.visits.find((item) => item.id === store.currentVisitId)
+  const currentPatient = current ? store.patients.find((item) => item.id === current.patientId) : null
+  const keepPatient = currentPatient && (currentPatient.unnamed || currentPatient.key === patientKey(draft) || !patientKey(draft))
+  const patient = upsertPatient(draft, keepPatient ? currentPatient.id : null)
+  const visit = current || { id: Date.now(), date: today(), createdAt: new Date().toISOString() }
+  const documents = visitDocuments(visit)
+  const docText = $('#clinicalDocument').value.trim()
+  const docHtml = typeof getDocumentHtml === 'function' ? getDocumentHtml() : ''
+  const isRealDocument = docText && !/^(Gerando documento clinico|Falha|Uso bloqueado)/.test(docText)
+  if (isRealDocument) {
+    let entry = documents.find((item) => item.id === store.currentDocId)
+    if (!entry) {
+      entry = { id: Date.now() + 1, at: new Date().toISOString() }
+      documents.unshift(entry)
+      store.currentDocId = entry.id
+    }
+    Object.assign(entry, { type: $('#documentType').value, title: documentTitleOf(docText), text: docText, html: docHtml, updatedAt: new Date().toISOString() })
+  }
+  Object.assign(visit, {
+    patientId: patient.id,
+    context: getContext(),
+    transcript: $('#transcriptText').value.trim() || visit.transcript || '',
+    documentType: documents[0]?.type || $('#documentType').value,
+    document: documents[0]?.text || '',
+    documentHtml: documents[0]?.html || '',
+    gate: store.gate || visit.gate || null,
+    updatedAt: new Date().toISOString()
+  })
+  if (!current) store.visits.unshift(visit)
+  store.currentVisitId = visit.id
+  store.selectedPatientId = patient.id
+  saveStore()
+  renderAll()
+  if (silent) {
+    if (!store.autoSaveNotified) window.ui?.toast('Atendimento salvo automaticamente no historico do paciente.', 'info')
+    store.autoSaveNotified = true
+    return visit
+  }
+  switchPage('pacientes')
+  window.ui?.toast(`Atendimento de ${patient.name} salvo.`)
+  return visit
+}
+
+function startNewVisit() {
+  // A new recording or imported audio is a new visit; documents generated after it go into it.
+  store.currentVisitId = null
+  store.currentDocId = null
+  store.autoSaveNotified = false
+}
+
+function openVisit(visitId, documentId = null) {
+  const visit = store.visits.find((item) => item.id === visitId)
+  if (!visit) return
+  const patient = store.patients.find((item) => item.id === visit.patientId)
+  const context = visit.context || {}
+  const documents = visitDocuments(visit)
+  const doc = documents.find((item) => item.id === documentId) || documents[0] || null
+  store.currentVisitId = visit.id
+  store.currentDocId = doc ? doc.id : null
+  store.autoSaveNotified = true
+  store.finalTranscriptSet = true
+  store.gate = visit.gate || null
+  $('#patientName').value = patient && !patient.unnamed ? patient.name : (context.patientName || '')
+  $('#patientBirth').value = patient?.birthDate || ''
+  $('#patientDoc').value = patient?.document || ''
+  $('#patientPhone').value = patient?.phone || ''
+  if (context.specialty) $('#specialty').value = context.specialty
+  if (context.visitType) $('#visitType').value = context.visitType
+  $('#visitReason').value = context.reason || ''
+  $('#recordConsent').checked = Boolean(context.consent)
+  $('#transcriptText').value = visit.transcript || ''
+  $('#clinicalDocument').value = doc?.text || ''
+  if (doc?.type && Array.from($('#documentType').options).some((option) => option.value === doc.type)) $('#documentType').value = doc.type
+  if (doc?.html && typeof setDocumentHtml === 'function') setDocumentHtml(doc.html)
+  $('#recordTimer').textContent = '00:00'
+  $('#recordStatus').textContent = `Atendimento de ${visit.date} aberto`
+  status($('#gateStatus'), visit.transcript ? 'Transcricao carregada. Escolha um documento e clique em Gerar para criar outro.' : 'Este atendimento foi salvo sem transcricao.', visit.transcript ? 'status-ok' : 'status-warn')
+  switchPage('atendimento')
 }
 
 function renderQuality(gaps = [], warnings = []) {
@@ -742,63 +999,11 @@ async function reviewQuality() {
   `
 }
 
-function upsertPatient(draft) {
-  const key = (draft.document || draft.phone || draft.name).toLowerCase()
-  let patient = store.patients.find((item) => item.key === key)
-  if (!patient) {
-    patient = { id: Date.now(), key, ...draft, createdAt: new Date().toISOString() }
-    store.patients.unshift(patient)
-  } else {
-    Object.assign(patient, draft)
-  }
-  return patient
-}
-
-function saveVisit() {
-  const patient = upsertPatient(getPatientDraft())
-  const visit = {
-    id: Date.now(),
-    patientId: patient.id,
-    date: today(),
-    context: getContext(),
-    transcript: $('#transcriptText').value.trim(),
-    documentType: $('#documentType').value,
-    document: $('#clinicalDocument').value.trim(),
-    documentHtml: typeof getDocumentHtml === 'function' ? getDocumentHtml() : '',
-    gate: store.gate
-  }
-  store.visits.unshift(visit)
-  store.selectedPatientId = patient.id
-  saveStore()
-  renderAll()
-  switchPage('pacientes')
-  window.ui?.toast(`Atendimento de ${patient.name} salvo.`)
-}
-
-function openVisit(visitId) {
-  const visit = store.visits.find((item) => item.id === visitId)
-  if (!visit) return
-  const patient = store.patients.find((item) => item.id === visit.patientId)
-  const context = visit.context || {}
-  $('#patientName').value = patient?.name || context.patientName || ''
-  $('#patientAge').value = patient?.age || ''
-  $('#patientDoc').value = patient?.document || ''
-  $('#patientPhone').value = patient?.phone || ''
-  if (context.specialty) $('#specialty').value = context.specialty
-  if (context.visitType) $('#visitType').value = context.visitType
-  $('#visitReason').value = context.reason || ''
-  $('#recordConsent').checked = Boolean(context.consent)
-  $('#transcriptText').value = visit.transcript || ''
-  $('#clinicalDocument').value = visit.document || ''
-  if (visit.documentHtml && typeof setDocumentHtml === 'function') setDocumentHtml(visit.documentHtml)
-  switchPage('atendimento')
-}
-
 function renderDashboard() {
   const todayVisits = store.visits.filter((visit) => visit.date === today()).length
   $('#statToday').textContent = todayVisits
   $('#statPatients').textContent = store.patients.length
-  $('#statDocs').textContent = store.visits.filter((visit) => visit.document).length
+  $('#statDocs').textContent = store.visits.reduce((total, visit) => total + visitDocuments(visit).length, 0)
   $('#statGaps').textContent = $$('#qualityPanel .list-item').length || 0
   $('#recentVisits').innerHTML = store.visits.slice(0, 6).map((visit) => visitItem(visit)).join('') || emptyItem('Sem atendimentos', 'Comece pelo modulo Atendimento.')
 }
@@ -815,7 +1020,7 @@ function emptyItem(title, text) {
 
 function renderPatients(filter = '') {
   const term = filter.toLowerCase()
-  const patients = store.patients.filter((patient) => patient.name.toLowerCase().includes(term) || patient.document.includes(term))
+  const patients = store.patients.filter((patient) => String(patient.name || '').toLowerCase().includes(term) || String(patient.document || '').includes(term))
   $('#patientList').innerHTML = patients.map((patient) => {
     const count = store.visits.filter((visit) => visit.patientId === patient.id).length
     return `<div class="list-item"><div><h3>${escapeHtml(patient.name)}</h3><p>${count} atendimento(s) - ${escapeHtml(patient.phone || patient.document || 'sem contato')}</p></div><button class="secondary-button compact" data-open-patient="${patient.id}">Ver</button></div>`
@@ -852,15 +1057,33 @@ function baseTemplateTitle(value) {
 }
 
 function resolveDocumentType() {
+  // Returns the type the AI server knows plus the structure the document must follow.
   const value = $('#documentType').value
-  if (!value.startsWith('custom:')) return { documentType: value, template: null }
-  const template = store.customTemplates.find((item) => `custom:${item.id}` === value)
-  return template ? { documentType: template.base, template } : { documentType: 'soap', template: null }
+  const extra = $('#docExtra')?.value.trim() || ''
+  const custom = value.startsWith('custom:') ? store.customTemplates.find((item) => `custom:${item.id}` === value) : null
+  const definition = DOCUMENT_TYPES[custom ? custom.base : value] || DOCUMENT_TYPES.soap
+  const template = custom
+    ? { name: custom.name, body: custom.body }
+    : { name: definition.title, body: definition.structure }
+  if (extra) template.body += `\n\nPedido do profissional para este documento (siga com prioridade e inclua exatamente): ${extra}`
+  return { documentType: definition.base, template, isCustom: Boolean(custom) }
+}
+
+function updateDocExtraHint() {
+  const value = $('#documentType').value
+  const custom = value.startsWith('custom:') ? store.customTemplates.find((item) => `custom:${item.id}` === value) : null
+  const definition = DOCUMENT_TYPES[custom ? custom.base : value] || DOCUMENT_TYPES.soap
+  $('#docExtra').placeholder = `Detalhes para este documento (opcional). ${definition.hint}`
 }
 
 function renderDocumentTypeOptions() {
   const select = $('#documentType')
   const current = select.value
+  if (!select.querySelector('option[data-builtin]')) {
+    select.innerHTML = Object.entries(DOCUMENT_TYPES)
+      .map(([value, item]) => `<option value="${value}" data-builtin>${escapeHtml(item.title)}</option>`)
+      .join('')
+  }
   select.querySelector('optgroup[data-custom]')?.remove()
   if (store.customTemplates.length) {
     const group = document.createElement('optgroup')
@@ -875,6 +1098,7 @@ function renderDocumentTypeOptions() {
     select.appendChild(group)
   }
   select.value = Array.from(select.options).some((option) => option.value === current) ? current : 'soap'
+  updateDocExtraHint()
 }
 
 function renderTemplates() {
@@ -1074,7 +1298,7 @@ function applyOpenAiStatusToGate(result) {
   if (!result?.configured) {
     status($('#gateStatus'), result?.message || 'Servidor de IA nao configurado.', 'status-warn')
   } else if ($('#gateStatus').textContent.includes('Servidor de IA')) {
-    status($('#gateStatus'), 'IA integrada pelo servidor GHZ. Grave e clique em Encerrar para transcrever automaticamente.', 'status-ok')
+    status($('#gateStatus'), 'Grave e clique em Encerrar para transcrever automaticamente.', 'status-ok')
   }
 }
 
@@ -1082,7 +1306,7 @@ async function refreshOpenAiStatusEverywhere() {
   const result = await window.medvozApi.getOpenAiStatus()
   const el = $('#openaiStatus')
   if (el) {
-    el.textContent = result.message || (result.configured ? 'IA integrada pelo servidor GHZ.' : 'Servidor de IA nao configurado.')
+    el.textContent = result.message || (result.configured ? '' : 'Servidor de IA nao configurado.')
     el.className = `inline-status ${result.configured ? 'status-ok' : 'status-warn'}`
   }
   applyOpenAiStatusToGate(result)
@@ -1167,7 +1391,8 @@ function bindEvents() {
     if (typeof copyDocument === 'function') return copyDocument()
     return navigator.clipboard.writeText($('#clinicalDocument').value)
   })
-  $('#btnSaveVisit').addEventListener('click', saveVisit)
+  $('#btnSaveVisit').addEventListener('click', () => saveVisit())
+  $('#documentType').addEventListener('change', updateDocExtraHint)
   $('#btnCheckUpdates').addEventListener('click', checkUpdates)
   $('#btnOpenUpdate').addEventListener('click', openLatestUpdate)
   $('#btnAskAgent').addEventListener('click', guardedAskAgent)
@@ -1192,7 +1417,7 @@ function bindEvents() {
   })
   $('#btnDemo').addEventListener('click', () => {
     $('#patientName').value = 'Marina Alves'
-    $('#patientAge').value = '48'
+    $('#patientBirth').value = '1978-03-14'
     $('#patientPhone').value = '(11) 99999-0000'
     $('#visitReason').value = 'Retorno por dor epigastrica e revisao de tratamento'
     $('#recordConsent').checked = true

@@ -70,6 +70,7 @@
     const out = []
     let list = null
     let first = true
+    let signature = false
     const closeList = () => {
       if (list) out.push(`</${list}>`)
       list = null
@@ -78,6 +79,17 @@
       const line = raw.trim()
       if (!line) {
         closeList()
+        return
+      }
+      // Signature area (rule line + doctor data): plain lines, no automatic bold or headings.
+      if (/^_{5,}$/.test(line)) {
+        closeList()
+        signature = true
+        out.push(`<p><br></p><p>${line}</p>`)
+        return
+      }
+      if (signature) {
+        out.push(`<p>${escapeHtml(line)}</p>`)
         return
       }
       let match = line.match(/^#{1,6}\s+(.*)$/)
@@ -376,7 +388,7 @@
       ? `<img class="logo" src="${settings.logoDataUrl}" alt="">`
       : ''
     const doctorLine = [settings.doctorName, settings.doctorCrm, settings.doctorSpecialty].filter(Boolean).map(escapeHtml).join(' &middot; ')
-    const patient = $('#patientName').value.trim()
+    const patient = $('#patientName').value.trim().replace(/^Paciente sem nome$/i, '')
     // Footer goes in the page margin box so it repeats on every page without covering text.
     const footerCss = String(settings.footerText || '').trim()
       .replace(/\\/g, '\\\\')
@@ -689,9 +701,10 @@
     host.innerHTML = `
       <div class="record-head">
         <div class="record-chips">
-          ${chip('Idade', patient.age ? `${patient.age} anos` : '')}
-          ${chip('Documento', patient.document)}
+          ${chip('Nascimento', patient.birthDate ? `${formatBirthDate(patient.birthDate)} (${ageFromBirth(patient.birthDate)} anos)` : (patient.age ? `${patient.age} anos` : ''))}
+          ${chip('CPF / documento', patient.document)}
           ${chip('Telefone', patient.phone)}
+          ${chip('Especialidade', patient.specialty || visits[0]?.context?.specialty || '')}
         </div>
         <div class="button-row">
           <button class="primary-button compact" data-action="new-visit">Novo atendimento</button>
@@ -715,12 +728,12 @@
   function patientEditForm(patient) {
     const field = (key, label, value, type = 'input') => type === 'textarea'
       ? `<label>${label}<textarea data-field="${key}" rows="2">${escapeHtml(value)}</textarea></label>`
-      : `<label>${label}<input data-field="${key}" value="${escapeHtml(value)}"></label>`
+      : `<label>${label}<input data-field="${key}" ${type === 'date' ? 'type="date"' : ''} value="${escapeHtml(value)}"></label>`
     return `<div class="record-edit">
       <div class="form-grid">
         ${field('name', 'Nome', patient.name)}
-        ${field('age', 'Idade', patient.age)}
-        ${field('document', 'Documento', patient.document)}
+        ${field('birthDate', 'Data de nascimento', patient.birthDate, 'date')}
+        ${field('document', 'CPF ou documento', patient.document)}
         ${field('phone', 'Telefone', patient.phone)}
       </div>
       ${field('allergies', 'Alergias', patient.allergies, 'textarea')}
@@ -743,23 +756,31 @@
 
   function timelineHtml(visits) {
     if (!visits.length) return '<div class="empty-state"><strong>Sem atendimentos</strong><span>Use "Novo atendimento" para registrar a primeira consulta.</span></div>'
-    return `<ol class="timeline">${visits.map((visit) => `
+    return `<ol class="timeline">${visits.map((visit) => {
+      const documents = visitDocuments(visit)
+      const transcript = String(visit.transcript || '').trim()
+      return `
       <li class="timeline-item">
         <span class="timeline-dot" aria-hidden="true"></span>
         <div class="timeline-card">
           <div class="timeline-top">
             <strong>${escapeHtml(visit.date)}</strong>
             <span class="timeline-tag">${escapeHtml(visit.context?.visitType || '')}</span>
-            ${visit.document ? `<span class="timeline-tag is-doc">${escapeHtml(documentLabel(visit.documentType))}</span>` : ''}
+            <span class="timeline-tag">${documents.length} documento(s)</span>
           </div>
           <p class="timeline-reason">${escapeHtml(visit.context?.specialty || '')} &middot; ${escapeHtml(visit.context?.reason || 'sem motivo informado')}</p>
-          ${visit.document ? `<p class="timeline-snippet">${escapeHtml(visit.document.replace(/\s+/g, ' ').slice(0, 180))}${visit.document.length > 180 ? '...' : ''}</p>` : ''}
+          ${documents.length ? `<div class="timeline-docs">${documents.map((doc) => `
+            <button type="button" class="timeline-doc" data-open-doc="${visit.id}:${doc.id}" title="Abrir este documento no atendimento">
+              <span>${escapeHtml(documentLabel(doc.type))}</span>${doc.title && doc.title.toLowerCase() !== documentLabel(doc.type).toLowerCase() ? `<b>${escapeHtml(doc.title)}</b>` : '<b>Abrir documento</b>'}
+            </button>`).join('')}</div>` : ''}
+          ${transcript ? `<details class="timeline-transcript"><summary>Ver transcricao (${transcript.split(/\s+/).length} palavras)</summary><div>${escapeHtml(transcript).replace(/\n/g, '<br>')}</div></details>` : '<p class="timeline-snippet">Atendimento sem transcricao salva.</p>'}
           <div class="button-row">
-            <button class="secondary-button compact" data-open-visit="${visit.id}">Abrir</button>
+            <button class="primary-button compact" data-open-visit="${visit.id}">Abrir atendimento</button>
             <button class="secondary-button compact danger-text" data-trash-visit="${visit.id}">Excluir</button>
           </div>
         </div>
-      </li>`).join('')}</ol>`
+      </li>`
+    }).join('')}</ol>`
   }
 
   function summaryHtml(patient, visits) {
@@ -796,7 +817,7 @@
       const result = await window.medvozApi.generateClinicalDocument({
         transcript: `${clinical}\n\nHistorico de atendimentos:\n${history}`,
         context: { ...last.context, reason: `Resumo para retorno: ${last.context?.reason || ''}`.slice(0, 200) },
-        patient: { name: patient.name, age: patient.age, document: patient.document, phone: patient.phone, allergies: patient.allergies || '', medications: patient.medications || '', conditions: patient.conditions || '' },
+        patient: { name: patient.unnamed ? '' : patient.name, birthDate: patient.birthDate || '', age: ageFromBirth(patient.birthDate) || patient.age || '', document: patient.document, phone: patient.phone, allergies: patient.allergies || '', medications: patient.medications || '', conditions: patient.conditions || '' },
         documentType: 'evolucao',
         template: { name: 'Resumo para o retorno', body: SUMMARY_TEMPLATE },
         tone: $('#tone').value,
@@ -933,8 +954,9 @@
       toast('Encerre a gravacao atual antes de iniciar outro atendimento.', 'warn')
       return
     }
-    $('#patientName').value = patient.name || ''
-    $('#patientAge').value = patient.age || ''
+    startNewVisit()
+    $('#patientName').value = patient.unnamed ? '' : (patient.name || '')
+    $('#patientBirth').value = patient.birthDate || ''
     $('#patientDoc').value = patient.document || ''
     $('#patientPhone').value = patient.phone || ''
     $('#visitReason').value = ''
@@ -956,6 +978,11 @@
         recordState.tab = tab.dataset.recordTab
         renderPatientRecord(patient)
         return
+      }
+      const openDoc = event.target.closest('[data-open-doc]')
+      if (openDoc) {
+        const [visitId, docId] = openDoc.dataset.openDoc.split(':').map(Number)
+        return openVisit(visitId, docId)
       }
       const openButton = event.target.closest('[data-open-visit]')
       if (openButton) return openVisit(Number(openButton.dataset.openVisit))
@@ -993,6 +1020,8 @@
         host.querySelectorAll('[data-field]').forEach((input) => { values[input.dataset.field] = input.value.trim() })
         if (!values.name) return toast('O nome do paciente e obrigatorio.', 'warn')
         Object.assign(patient, values)
+        patient.unnamed = false
+        patient.age = ageFromBirth(patient.birthDate) || patient.age || ''
         patient.key = (patient.document || patient.phone || patient.name).toLowerCase()
         recordState.editing = false
         saveStore()

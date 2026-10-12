@@ -117,8 +117,8 @@
               <h2>Paciente e finalidade</h2>
               <div class="form-grid">
                 <label>Paciente<input id="patientName" placeholder="Nome completo"></label>
-                <label>Idade<input id="patientAge" type="number" min="0" placeholder="Ex.: 42"></label>
-                <label>Documento<input id="patientDoc" placeholder="CPF, RG ou prontuario"></label>
+                <label>Data de nascimento<input id="patientBirth" type="date" max="2100-12-31"></label>
+                <label>CPF ou documento<input id="patientDoc" placeholder="CPF, RG ou prontuario"></label>
                 <label>Telefone<input id="patientPhone" placeholder="WhatsApp do paciente"></label>
                 <label>Especialidade
                   <select id="specialty">
@@ -168,8 +168,8 @@
                 <div class="recorder-options">
                   <label class="inline-field">Fonte de audio
                     <select id="audioSource">
-                      <option value="mic">Microfone</option>
-                      <option value="mixed">Microfone + som do computador (teleconsulta)</option>
+                      <option value="mixed" selected>Microfone + som do computador (teleconsulta)</option>
+                      <option value="mic">Microfone (consulta presencial)</option>
                     </select>
                   </label>
                   <label class="toggle-row">
@@ -229,16 +229,22 @@
                   <select id="documentType" class="compact-select">
                     <option value="soap">SOAP</option>
                     <option value="evolucao">Evolucao</option>
-                    <option value="receita">Receita/conduta</option>
+                    <option value="receita">Receita e conduta</option>
                     <option value="atestado">Atestado</option>
                     <option value="encaminhamento">Encaminhamento</option>
                     <option value="exames">Solicitacao de exames</option>
                     <option value="lme">LME</option>
                     <option value="spsadt">Guia SP/SADT</option>
+                    <option value="aso">ASO - Saude ocupacional</option>
+                    <option value="retorno_trabalho">Retorno ao trabalho</option>
+                    <option value="comparecimento">Declaracao de comparecimento</option>
+                    <option value="relatorio">Relatorio medico</option>
+                    <option value="orientacoes">Orientacoes ao paciente</option>
                   </select>
                   <button class="primary-button" id="btnGenerateDoc" type="button">Gerar</button>
                 </div>
               </div>
+              <input id="docExtra" class="doc-extra" placeholder="Detalhes para este documento (opcional)">
               <div class="doc-toolbar" role="toolbar" aria-label="Formatacao do documento">
                 <button type="button" data-cmd="bold" title="Negrito (Ctrl+B)"><b>B</b></button>
                 <button type="button" data-cmd="italic" title="Italico (Ctrl+I)"><i>I</i></button>
@@ -316,12 +322,17 @@
                 <select id="tplBase">
                   <option value="soap">SOAP</option>
                   <option value="evolucao">Evolucao</option>
-                  <option value="receita">Receita/conduta</option>
+                  <option value="receita">Receita e conduta</option>
                   <option value="atestado">Atestado</option>
                   <option value="encaminhamento">Encaminhamento</option>
                   <option value="exames">Solicitacao de exames</option>
                   <option value="lme">LME</option>
                   <option value="spsadt">Guia SP/SADT</option>
+                  <option value="aso">ASO - Saude ocupacional</option>
+                  <option value="retorno_trabalho">Retorno ao trabalho</option>
+                  <option value="comparecimento">Declaracao de comparecimento</option>
+                  <option value="relatorio">Relatorio medico</option>
+                  <option value="orientacoes">Orientacoes ao paciente</option>
                 </select>
               </label>
             </div>
@@ -449,7 +460,7 @@
                   <option value="orientacao para paciente">Orientacao para paciente</option>
                 </select>
               </label>
-              <p class="inline-status status-ok" id="openaiStatus">IA integrada pelo servidor GHZ.</p>
+
               <div class="detail-box" id="licenseBox"></div>
             </article>
           </div>
