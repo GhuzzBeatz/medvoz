@@ -8,6 +8,7 @@ const { pathToFileURL } = require('url')
 const { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, shell } = require('electron')
 const config = require('./app.config')
 const { createLicenseService } = require('./services/license-service')
+const { createUpdateService } = require('./services/update-service')
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 let mainWindow = null
@@ -188,13 +189,51 @@ async function transcribeBuffer(payload) {
   })
 }
 
+const MIN_HEALTH_CONFIDENCE = 0.55
+// Transcripts already approved in this session. The AI classifier is not deterministic, so
+// re-asking about the same text could block a document that was just released.
+const approvedTranscripts = new Set()
+
+function transcriptFingerprint(text) {
+  return crypto.createHash('sha256').update(String(text || '').replace(/\s+/g, ' ').trim().toLowerCase()).digest('hex')
+}
+
 async function classifyTranscript({ transcript, context }) {
   const intake = assertClinicalIntake(context)
   if (!intake.ok) return intake
   const text = String(transcript || '').trim()
   if (text.length < 20) return { ok: false, medical: false, message: 'Transcricao insuficiente para validar o assunto.' }
 
-  return callMedVozAi('classify', { transcript: text, context: intake.context })
+  const fingerprint = transcriptFingerprint(text)
+  if (approvedTranscripts.has(fingerprint)) {
+    return { ok: true, medical: true, confidence: 1, category: 'assunto de saude ja validado', cached: true }
+  }
+
+  const gate = await callMedVozAi('classify', { transcript: text, context: intake.context })
+  // One rule for every step (transcription and documents), so they never disagree.
+  if (gate?.ok && gate.medical && Number(gate.confidence ?? 1) < MIN_HEALTH_CONFIDENCE) {
+    return {
+      ...gate,
+      medical: false,
+      message: 'O assunto de saude nao ficou claro no audio. Grave uma conversa clinica mais completa ou cole a transcricao.'
+    }
+  }
+  if (gate?.ok && gate.medical) approvedTranscripts.add(fingerprint)
+  return gate
+}
+
+function clinicianInstructions(clinician, patient) {
+  const lines = [
+    clinician?.doctorName && `Profissional: ${clinician.doctorName}`,
+    clinician?.doctorCrm && `CRM: ${clinician.doctorCrm}`,
+    clinician?.doctorSpecialty && `Especialidade: ${clinician.doctorSpecialty}`,
+    clinician?.clinicName && `Clinica: ${clinician.clinicName}`,
+    patient?.name && patient.name !== 'Paciente sem nome' && `Paciente: ${patient.name}`,
+    patient?.age && `Idade do paciente: ${patient.age}`,
+    patient?.document && `Documento do paciente: ${patient.document}`,
+    `Data de hoje: ${new Date().toLocaleDateString('pt-BR')}`
+  ].filter(Boolean).map((line) => String(line).slice(0, 200))
+  return `\n\n---\nDados fixos para preencher o documento (use exatamente estes dados, sem deixar campos como [nome do medico], [CRM] ou ____ para preencher a mao):\n${lines.join('\n')}`
 }
 
 function normalizeDocumentTemplate(template) {
@@ -203,21 +242,22 @@ function normalizeDocumentTemplate(template) {
   return name && body ? { name, body } : null
 }
 
-async function generateClinicalDocument({ transcript, context, patient, documentType, template, tone, detailLevel }) {
+async function generateClinicalDocument({ transcript, context, patient, clinician, documentType, template, tone, detailLevel }) {
   // The health gate always runs on the conversation alone, never on the doctor's template text.
   const gate = await classifyTranscript({ transcript, context })
-  if (!gate.ok || !gate.medical || Number(gate.confidence || 0) < 0.55) {
-    return { ok: false, blocked: true, message: 'Uso bloqueado: o conteudo nao parece ser relacionado a saude/medicina.' }
+  if (!gate.ok || !gate.medical) {
+    return { ok: false, blocked: true, message: gate.message || 'Uso bloqueado: o conteudo nao parece ser relacionado a saude/medicina.' }
   }
 
   const customTemplate = normalizeDocumentTemplate(template)
-  const aiTranscript = customTemplate
-    ? `${transcript}\n\n---\nModelo do profissional "${customTemplate.name}". Monte o documento seguindo exatamente esta estrutura e estas instrucoes, sem inventar dados que nao foram falados:\n${customTemplate.body}`
-    : transcript
+  const templateText = customTemplate
+    ? `\n\n---\nModelo do profissional "${customTemplate.name}". Monte o documento seguindo exatamente esta estrutura e estas instrucoes, sem inventar dados que nao foram falados:\n${customTemplate.body}`
+    : ''
   const result = await callMedVozAi('generate_document', {
-    transcript: aiTranscript,
+    transcript: `${transcript}${templateText}${documentType === 'analise_agente_clinico' ? '' : clinicianInstructions(clinician, patient)}`,
     context,
     patient,
+    clinician,
     documentType,
     ...(customTemplate ? { template: customTemplate } : {}),
     tone,
@@ -269,6 +309,44 @@ ipcMain.handle('ai:transcribe-audio', async (_event, payload) => transcribeBuffe
 ipcMain.handle('ai:classify-transcript', async (_event, payload) => classifyTranscript(payload))
 ipcMain.handle('ai:generate-clinical-document', async (_event, payload) => generateClinicalDocument(payload))
 ipcMain.handle('ai:analyze-clinical-quality', async (_event, payload) => analyzeClinicalQuality(payload))
+
+let updateInProgress = false
+
+async function downloadAndInstallUpdate() {
+  const updates = createUpdateService({
+    appId: config.appId,
+    getVersion: () => app.getVersion(),
+    releaseEndpoint: config.fallbackUpdateEndpoint,
+    requestJson,
+    tempDir: app.getPath('temp')
+  })
+  const result = await updates.downloadLatest((progress) => mainWindow?.webContents.send('update:progress', progress))
+  if (!result.ok) return result
+  if (!app.isPackaged) return { ...result, dev: true }
+
+  // The installer cannot replace files while MedVoz is open: start it a moment after we quit.
+  const child = require('child_process').spawn('cmd.exe', ['/d', '/s', '/c', `"ping -n 3 127.0.0.1 >nul & start "" "${result.path}""`], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+    windowsVerbatimArguments: true
+  })
+  child.unref()
+  setTimeout(() => app.quit(), 800)
+  return result
+}
+ipcMain.handle('update:install', async () => {
+  if (!licenseService?.isSessionAuthorized()) return { ok: false, message: 'Valide a licenca para atualizar.' }
+  if (updateInProgress) return { ok: false, message: 'A atualizacao ja esta sendo baixada.' }
+  updateInProgress = true
+  try {
+    return await downloadAndInstallUpdate()
+  } catch (error) {
+    return { ok: false, message: error.message || 'Falha ao baixar a atualizacao.' }
+  } finally {
+    updateInProgress = false
+  }
+})
 
 const MAX_PRINT_HTML_BYTES = 12 * 1024 * 1024
 

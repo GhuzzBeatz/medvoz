@@ -14,6 +14,7 @@ const files = [
   'js/features.js',
   'js/license.js',
   'services/license-service.js',
+  'services/update-service.js',
   'pages/licenca.html',
   'css/style.css',
   'components/ghz-window-bar.js',
@@ -54,6 +55,8 @@ if (!config.includes("appId: 'medvoz'")) throw new Error('appId publico incorret
 if (!config.includes('ghz-app-downloads?app=medvoz')) throw new Error('Endpoint central GHZ para MedVoz ausente.')
 if (!index.includes('js/features.js') || !index.includes('id="docEditor"') || !index.includes('data-page-panel="lixeira"')) throw new Error('Recursos do workspace ausentes no HTML.')
 if (!main.includes('document:export-pdf') || !preload.includes('exportPdf')) throw new Error('Exportacao de PDF ausente.')
+if (!main.includes('update:install') || !preload.includes('installUpdate')) throw new Error('Atualizacao dentro do app ausente.')
+if (!main.includes('approvedTranscripts')) throw new Error('Cache de transcricoes aprovadas ausente.')
 if (!main.includes('setDisplayMediaRequestHandler')) throw new Error('Captura do som do computador ausente.')
 if (!gitignore.includes('.env.*')) throw new Error('Arquivos .env devem ser ignorados.')
 

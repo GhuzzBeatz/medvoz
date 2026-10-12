@@ -5,6 +5,12 @@ contextBridge.exposeInMainWorld('ghzApp', {
   openSupport: () => ipcRenderer.invoke('app:open-support'),
   openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
   checkForUpdates: () => ipcRenderer.invoke('app:check-updates'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  onUpdateProgress: (callback) => {
+    const listener = (_event, data) => callback(data)
+    ipcRenderer.on('update:progress', listener)
+    return () => ipcRenderer.removeListener('update:progress', listener)
+  },
   activateLicense: (payload) => ipcRenderer.invoke('license:activate', payload),
   validateLicense: () => ipcRenderer.invoke('license:validate'),
   getLicenseState: () => ipcRenderer.invoke('license:get-state'),

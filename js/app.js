@@ -148,6 +148,23 @@ function signatureBlock() {
   return lines.length ? `\n\n${lines.join('\n')}` : ''
 }
 
+function fillDocumentPlaceholders(text) {
+  // Safety net in case the AI still leaves blanks for data the app already knows.
+  const clinician = getClinicianDraft()
+  const patient = getPatientDraft()
+  const known = [
+    [/\[\s*(nome (do|da) (m[eé]dic[oa]|profissional)|m[eé]dic[oa]|profissional)\s*\]/gi, clinician.doctorName],
+    [/\[\s*(n[uú]mero (do|de) )?crm[^\]]*\]/gi, clinician.doctorCrm],
+    [/\[\s*especialidade[^\]]*\]/gi, clinician.doctorSpecialty],
+    [/\[\s*(nome (da|do) )?(cl[ií]nica|consult[oó]rio|estabelecimento)\s*\]/gi, clinician.clinicName],
+    [/\[\s*(nome (do|da) )?paciente\s*\]/gi, patient.name !== 'Paciente sem nome' ? patient.name : ''],
+    [/\[\s*idade\s*\]/gi, patient.age],
+    [/\[\s*(cpf|rg|documento)[^\]]*\]/gi, patient.document],
+    [/\[\s*data( (de hoje|atual|do atendimento))?\s*\]/gi, today()]
+  ]
+  return known.reduce((result, [pattern, value]) => (value ? result.replace(pattern, value) : result), String(text || ''))
+}
+
 async function blobToBytes(blob) {
   return Array.from(new Uint8Array(await blob.arrayBuffer()))
 }
@@ -281,14 +298,51 @@ async function finishLiveTranscription() {
   store.liveText = result.text
   store.liveGateOk = result.gateOk
   $('#liveBadge').hidden = true
+  liveStatus('')
   if (!store.finalTranscriptSet && result.gateOk && result.text) $('#transcriptText').value = result.text
 }
 
+function recordedMs() {
+  const running = store.startedAt ? Date.now() - store.startedAt : 0
+  return (store.elapsedMs || 0) + running
+}
+
+function renderTimer() {
+  $('#recordTimer').textContent = formatTimer(recordedMs())
+}
+
+function startTimer() {
+  stopTimer()
+  store.startedAt = Date.now()
+  store.timer = setInterval(renderTimer, 500)
+}
+
+function stopTimer() {
+  // Freezes the elapsed time; safe to call any number of times.
+  if (store.startedAt) store.elapsedMs = (store.elapsedMs || 0) + (Date.now() - store.startedAt)
+  store.startedAt = null
+  clearInterval(store.timer)
+  store.timer = null
+}
+
 async function startRecording() {
+  if (store.starting || (store.recorder && store.recorder.state !== 'inactive')) return
   if (!checkClinicalIntake('gravar')) return
 
-  window.MedVozLive?.cancel()
-  store.stream = await openRecordingStream()
+  // Lock the button right away: opening mic + system audio can take a moment.
+  store.starting = true
+  $('#btnStartRecord').disabled = true
+  $('#recordStatus').textContent = 'Preparando microfone...'
+  try {
+    window.MedVozLive?.cancel()
+    store.stream = await openRecordingStream()
+  } catch (error) {
+    $('#btnStartRecord').disabled = false
+    $('#recordStatus').textContent = 'Pronto para gravar'
+    throw error
+  } finally {
+    store.starting = false
+  }
   store.chunks = []
   store.audioBlob = null
   store.recordingReady = false
@@ -308,6 +362,8 @@ async function startRecording() {
     if (event.data?.size) store.chunks.push(event.data)
   }
   store.recorder.onstop = () => {
+    stopTimer()
+    renderTimer()
     store.stream?.getTracks().forEach((track) => track.stop())
     releaseCaptureStreams()
     $('#btnImportAudio').disabled = false
@@ -325,10 +381,9 @@ async function startRecording() {
   }
   store.recorder.start(1000)
   startLiveTranscription(store.stream)
-  store.startedAt = Date.now()
-  store.timer = setInterval(() => {
-    $('#recordTimer').textContent = formatTimer(Date.now() - store.startedAt)
-  }, 500)
+  store.elapsedMs = 0
+  startTimer()
+  renderTimer()
   $('#recordStatus').textContent = 'Gravando consulta'
   setRecordingUi(true)
 }
@@ -338,19 +393,23 @@ function pauseRecording() {
   if (store.recorder.state === 'recording') {
     store.recorder.pause()
     window.MedVozLive?.pause()
+    stopTimer()
+    renderTimer()
     $('#recordStatus').textContent = 'Gravacao pausada'
     $('#btnPauseRecord').textContent = 'Retomar'
   } else if (store.recorder.state === 'paused') {
     store.recorder.resume()
     window.MedVozLive?.resume()
+    startTimer()
     $('#recordStatus').textContent = 'Gravando consulta'
     $('#btnPauseRecord').textContent = 'Pausar'
   }
 }
 
 function stopRecording() {
+  stopTimer()
   if (!store.recorder) return
-  clearInterval(store.timer)
+  renderTimer()
   if (store.recorder.state === 'inactive') return
   $('#recordStatus').textContent = 'Finalizando audio...'
   $('#btnPauseRecord').disabled = true
@@ -403,7 +462,9 @@ async function transcribeFull() {
     status($('#gateStatus'), result.message || 'Falha na transcricao completa.', 'status-error')
     return
   }
-  const gate = await window.medvozApi.classifyTranscript({ transcript: result.text, context: getContext() })
+  // Validate exactly the text shown on screen, the same text later used to generate documents.
+  const transcriptText = renderTranscript(result)
+  const gate = await window.medvozApi.classifyTranscript({ transcript: transcriptText, context: getContext() })
   store.gate = gate
   if (!gate.ok || !gate.medical) {
     store.finalTranscriptSet = true
@@ -412,7 +473,7 @@ async function transcribeFull() {
     return
   }
   store.finalTranscriptSet = true
-  $('#transcriptText').value = renderTranscript(result)
+  $('#transcriptText').value = transcriptText
   status($('#gateStatus'), 'Transcricao completa liberada para documentacao clinica.', 'status-ok')
   return result
 }
@@ -536,7 +597,10 @@ async function generateDocument() {
     $('#clinicalDocument').value = result.message || 'Falha ao gerar documento.'
     return
   }
-  $('#clinicalDocument').value = `${template ? template.name : result.title}\n\n${result.document}${signatureBlock()}`
+  const body = fillDocumentPlaceholders(result.document || '')
+  const clinician = getClinicianDraft()
+  const alreadySigned = [clinician.doctorCrm, clinician.doctorName].some((value) => value && body.includes(value))
+  $('#clinicalDocument').value = `${template ? template.name : result.title}\n\n${body}${alreadySigned ? '' : signatureBlock()}`
   renderQuality(result.gaps, result.warnings)
 }
 
@@ -829,22 +893,71 @@ async function checkUpdates() {
   const asset = Array.isArray(result.assets) ? result.assets.find((item) => String(item.name || '').endsWith('.exe')) : null
   const downloadUrl = result.download_url || result.downloadUrl || asset?.browser_download_url || result.html_url || result.downloadPage || store.config.downloadPage
   latestUpdateUrl = downloadUrl || ''
-  $('#btnOpenUpdate').disabled = !latestUpdateUrl
+  const latest = result.version || result.latest_version || result.tag_name || ''
+  const installed = result.installedVersion || store.config.version
+  const wasAvailable = store.updateAvailable
+  store.updateAvailable = Boolean(latest && compareVersions(latest, installed) > 0)
+  $('#btnOpenUpdate').disabled = !store.updateAvailable && !latestUpdateUrl
   updateDownloadButtonLabel(result)
   $('#updateStatus').textContent = [
-    `Versao instalada: ${result.installedVersion || store.config.version}`,
-    `Ultima disponivel: ${result.version || result.latest_version || result.tag_name || 'nao informada'}`,
-    `Fonte: ${result.source || 'nao informada'}`,
-    result.primary_error ? `Endpoint GHZ: ${result.primary_error}` : '',
-    `Download fixo: ${downloadUrl || 'indisponivel'}`,
+    `Versao instalada: ${installed}`,
+    `Ultima disponivel: ${latest || 'nao informada'}`,
+    store.updateAvailable ? 'Nova versao disponivel. Clique em "Baixar e instalar": o download acontece aqui mesmo e o MedVoz fecha sozinho para instalar.' : 'Voce ja esta na versao mais recente.',
     `Notas: ${result.notes || result.body || result.message || 'Sem notas disponiveis.'}`
   ].filter(Boolean).join('\n')
+  if (store.updateAvailable && !wasAvailable) {
+    window.ui?.toast(`Nova versao ${normalizeUpdateVersion(latest)} disponivel.`, 'info', {
+      duration: 10000,
+      action: { label: 'Atualizar', onClick: () => { switchPage('atualizacoes'); openLatestUpdate() } }
+    })
+  }
+}
+
+function showUpdateProgress(text, percent) {
+  $('#updateProgress').hidden = false
+  $('#updateProgressText').textContent = text
+  $('#updateProgressBar').style.width = `${Math.max(0, Math.min(100, percent))}%`
 }
 
 async function openLatestUpdate() {
+  if (store.updateAvailable && window.ghzApp.installUpdate) return installUpdateInApp()
   if (!latestUpdateUrl) await checkUpdates()
+  if (store.updateAvailable && window.ghzApp.installUpdate) return installUpdateInApp()
   if (!latestUpdateUrl) return
   await window.ghzApp.openExternal(latestUpdateUrl)
+}
+
+async function installUpdateInApp() {
+  if (store.recorder && store.recorder.state !== 'inactive') {
+    window.ui?.toast('Encerre a gravacao antes de atualizar.', 'warn')
+    return
+  }
+  const button = $('#btnOpenUpdate')
+  button.disabled = true
+  $('#btnCheckUpdates').disabled = true
+  showUpdateProgress('Iniciando download...', 0)
+  const unsubscribe = window.ghzApp.onUpdateProgress(({ received, total, version }) => {
+    const mb = (bytes) => (bytes / 1048576).toFixed(1)
+    const percent = total ? (received / total) * 100 : 0
+    showUpdateProgress(`Baixando versao ${version}: ${mb(received)} de ${total ? mb(total) : '?'} MB (${Math.round(percent)}%)`, percent)
+  })
+  try {
+    const result = await window.ghzApp.installUpdate()
+    if (result?.ok) {
+      showUpdateProgress(result.dev
+        ? `Download verificado (modo desenvolvimento, instalador nao executado): ${result.path}`
+        : 'Download concluido. Abrindo o instalador e fechando o MedVoz...', 100)
+      return
+    }
+    $('#updateProgress').hidden = true
+    window.ui?.toast(result?.message || 'Nao foi possivel baixar a atualizacao.', result?.upToDate ? 'info' : 'error', latestUpdateUrl && !result?.upToDate
+      ? { action: { label: 'Baixar pelo navegador', onClick: () => window.ghzApp.openExternal(latestUpdateUrl) } }
+      : undefined)
+  } finally {
+    unsubscribe()
+    button.disabled = false
+    $('#btnCheckUpdates').disabled = false
+  }
 }
 
 function applyOpenAiStatusToGate(result) {
@@ -917,7 +1030,7 @@ function compareVersions(a, b) {
 function updateDownloadButtonLabel(result) {
   const latest = result.version || result.latest_version || result.tag_name || ''
   const installed = result.installedVersion || store.config.version
-  $('#btnOpenUpdate').textContent = latest && compareVersions(latest, installed) > 0 ? 'Baixar atualizacao' : 'Abrir download'
+  $('#btnOpenUpdate').textContent = latest && compareVersions(latest, installed) > 0 ? 'Baixar e instalar' : 'Abrir download'
 }
 
 async function askAgent() {
