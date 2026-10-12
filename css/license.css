@@ -180,3 +180,12 @@ form button:disabled {
   color: color-mix(in srgb, var(--accent) 60%, #fff);
   text-decoration: underline;
 }
+
+img.license-icon {
+  display: block;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  background: none;
+  filter: drop-shadow(0 10px 22px rgba(22, 160, 133, .35));
+}

@@ -1,6 +1,6 @@
 {
   "name": "medvoz",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Assistente GHZ para transcricao medica, documentacao clinica e gestao de pacientes",
   "main": "main.js",
   "author": "GHZ Plugin",
@@ -25,14 +25,19 @@
       "!dist_installer/**/*",
       "!dist/**/*",
       "!tests/**/*",
+      "!build/**/*",
       "!.env",
       "!.env.*"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true

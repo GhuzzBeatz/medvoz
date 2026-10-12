@@ -2474,3 +2474,16 @@ textarea:focus {
 .update-progress .inline-status {
   margin: 0;
 }
+/* App icon image in the sidebar brand */
+.app-brand-icon.has-image {
+  overflow: hidden;
+  padding: 0;
+  background: none;
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.app-brand-icon.has-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
