@@ -12,7 +12,8 @@ const store = {
   stopPromise: null,
   startedAt: null,
   timer: null,
-  selectedPatientId: null
+  selectedPatientId: null,
+  autoProcessing: false
 }
 
 let latestUpdateUrl = ''
@@ -97,6 +98,28 @@ function setRecordingUi(recording, paused = false) {
   $('#btnFullTranscribe').disabled = recording || !store.recordingReady || !store.audioBlob?.size || !store.gate?.medical
 }
 
+function getClinicianDraft() {
+  return {
+    clinicName: store.settings.clinicName || '',
+    doctorName: store.settings.doctorName || '',
+    doctorCrm: store.settings.doctorCrm || '',
+    doctorSpecialty: store.settings.doctorSpecialty || '',
+    footerText: store.settings.footerText || ''
+  }
+}
+
+function signatureBlock() {
+  const clinician = getClinicianDraft()
+  const lines = [
+    clinician.doctorName,
+    clinician.doctorCrm,
+    clinician.doctorSpecialty,
+    clinician.clinicName,
+    clinician.footerText
+  ].filter(Boolean)
+  return lines.length ? `\n\n${lines.join('\n')}` : ''
+}
+
 async function blobToBytes(blob) {
   return Array.from(new Uint8Array(await blob.arrayBuffer()))
 }
@@ -148,6 +171,8 @@ async function startRecording() {
   store.recordingReady = false
   store.stopPromise = null
   store.gate = null
+  store.autoProcessing = false
+  $('#transcriptText').value = ''
   const preferredMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
   store.recorder = new MediaRecorder(store.stream, { mimeType: preferredMime })
   store.recorder.ondataavailable = (event) => {
@@ -159,13 +184,11 @@ async function startRecording() {
     store.recordingReady = store.audioBlob.size > 0
     setRecordingUi(false)
     $('#recordStatus').textContent = store.recordingReady ? 'Gravacao encerrada' : 'Gravacao sem audio'
-    status(
-      $('#gateStatus'),
-      store.recordingReady
-        ? `Audio pronto (${Math.round(store.audioBlob.size / 1024)} KB). Clique em Validar assunto.`
-        : 'Nenhum audio foi capturado. Tente gravar novamente.',
-      store.recordingReady ? 'status-ok' : 'status-error'
-    )
+    if (store.recordingReady) {
+      status($('#gateStatus'), `Audio pronto (${Math.round(store.audioBlob.size / 1024)} KB). Validando e transcrevendo automaticamente...`, 'status-warn')
+    } else {
+      status($('#gateStatus'), 'Nenhum audio foi capturado. Tente gravar novamente.', 'status-error')
+    }
   }
   store.recorder.start(1000)
   store.startedAt = Date.now()
@@ -203,6 +226,9 @@ function stopRecording() {
     store.recorder.addEventListener('stop', resolve, { once: true })
   })
   store.recorder.stop()
+  store.stopPromise
+    .then(() => autoValidateAndTranscribe())
+    .catch((error) => status($('#gateStatus'), error.message || 'Falha ao finalizar audio.', 'status-error'))
 }
 
 async function validateSample() {
@@ -217,11 +243,12 @@ async function validateSample() {
   store.gate = gate
   if (!gate.ok || !gate.medical) {
     $('#btnFullTranscribe').disabled = true
-    status($('#gateStatus'), gate.message || `Bloqueado: ${gate.reason || 'conteudo fora de saude.'}`, 'status-error')
+    status($('#gateStatus'), gate.message || 'Nao foi encontrado assunto especifico de medicina/saude. A transcricao nao foi liberada.', 'status-error')
     return
   }
   $('#btnFullTranscribe').disabled = false
   status($('#gateStatus'), `Liberado: ${gate.category} (${Math.round((gate.confidence || 0) * 100)}% de confianca).`, 'status-ok')
+  return gate
 }
 
 async function transcribeFull() {
@@ -237,11 +264,36 @@ async function transcribeFull() {
   store.gate = gate
   if (!gate.ok || !gate.medical) {
     $('#transcriptText').value = ''
-    status($('#gateStatus'), gate.message || 'Uso bloqueado apos validacao completa.', 'status-error')
+    status($('#gateStatus'), gate.message || 'Nao foi encontrado assunto especifico de medicina/saude. A transcricao nao foi liberada.', 'status-error')
     return
   }
   $('#transcriptText').value = renderTranscript(result)
   status($('#gateStatus'), 'Transcricao completa liberada para documentacao clinica.', 'status-ok')
+  return result
+}
+
+async function autoValidateAndTranscribe() {
+  if (store.autoProcessing || !store.recordingReady || !store.audioBlob?.size) return
+  store.autoProcessing = true
+  try {
+    if (!(await ensureOpenAiConfigured())) return
+    $('#transcriptText').value = ''
+    status($('#gateStatus'), 'Validando se o audio e de atendimento em saude...', 'status-warn')
+    const gate = await validateSample()
+    if (!gate?.ok || !gate.medical) return
+    status($('#gateStatus'), 'Assunto de saude confirmado. Transcrevendo conversa completa...', 'status-warn')
+    await transcribeFull()
+  } catch (error) {
+    $('#transcriptText').value = ''
+    status(
+      $('#gateStatus'),
+      error.message || 'Nao foi possivel transcrever. A transcricao e exclusiva para assuntos de medicina/saude.',
+      'status-error'
+    )
+  } finally {
+    store.autoProcessing = false
+    setRecordingUi(false)
+  }
 }
 
 function renderTranscript(result) {
@@ -265,6 +317,7 @@ async function generateDocument() {
     transcript,
     context: getContext(),
     patient: getPatientDraft(),
+    clinician: getClinicianDraft(),
     documentType: $('#documentType').value,
     tone: $('#tone').value,
     detailLevel: $('#detailLevel').value
@@ -273,8 +326,7 @@ async function generateDocument() {
     $('#clinicalDocument').value = result.message || 'Falha ao gerar documento.'
     return
   }
-  const footer = store.settings.footerText ? `\n\n${store.settings.footerText}` : ''
-  $('#clinicalDocument').value = `${result.title}\n\n${result.document}${footer}`
+  $('#clinicalDocument').value = `${result.title}\n\n${result.document}${signatureBlock()}`
   renderQuality(result.gaps, result.warnings)
 }
 
@@ -396,6 +448,8 @@ function renderTemplates() {
 function renderSettings() {
   $('#clinicName').value = store.settings.clinicName || ''
   $('#doctorName').value = store.settings.doctorName || ''
+  $('#doctorCrm').value = store.settings.doctorCrm || ''
+  $('#doctorSpecialty').value = store.settings.doctorSpecialty || ''
   $('#footerText').value = store.settings.footerText || ''
   $('#detailLevel').value = store.settings.detailLevel || 'objetivo'
   $('#tone').value = store.settings.tone || 'clinico direto'
@@ -458,7 +512,7 @@ function applyOpenAiStatusToGate(result) {
   if (!result?.configured) {
     status($('#gateStatus'), result?.message || 'Servidor de IA nao configurado.', 'status-warn')
   } else if ($('#gateStatus').textContent.includes('Servidor de IA')) {
-    status($('#gateStatus'), 'IA integrada pelo servidor GHZ. Grave, encerre e valide o assunto.', 'status-ok')
+    status($('#gateStatus'), 'IA integrada pelo servidor GHZ. Grave e clique em Encerrar para transcrever automaticamente.', 'status-ok')
   }
 }
 
@@ -535,6 +589,7 @@ async function askAgent() {
     transcript: `${$('#transcriptText').value}\n\nPergunta do agente: ${prompt}`,
     context: getContext(),
     patient: getPatientDraft(),
+    clinician: getClinicianDraft(),
     documentType: 'analise_agente_clinico',
     tone: $('#tone').value,
     detailLevel: $('#detailLevel').value
@@ -569,6 +624,8 @@ function bindEvents() {
     store.settings = {
       clinicName: $('#clinicName').value.trim(),
       doctorName: $('#doctorName').value.trim(),
+      doctorCrm: $('#doctorCrm').value.trim(),
+      doctorSpecialty: $('#doctorSpecialty').value.trim(),
       footerText: $('#footerText').value.trim(),
       detailLevel: $('#detailLevel').value,
       tone: $('#tone').value

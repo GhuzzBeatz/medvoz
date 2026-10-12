@@ -97,7 +97,7 @@
             </div>
           </div>
 
-          <div class="clinical-grid">
+          <div class="clinical-flow">
             <article class="content-card">
               <small class="section-label">Contexto obrigatorio</small>
               <h2>Paciente e finalidade</h2>
@@ -157,11 +157,11 @@
                   <div class="mic-label"><b id="micLabel">Microfone desligado</b><em id="micHint">Clique em Iniciar para gravar</em></div>
                 </div>
               </div>
-              <div class="button-row spread">
+              <div class="button-row spread recorder-actions">
                 <button class="secondary-button" id="btnGateSample" type="button" disabled>Validar assunto</button>
                 <button class="primary-button" id="btnFullTranscribe" type="button" disabled>Transcrever completo</button>
               </div>
-              <p class="inline-status" id="gateStatus">A validacao aparece aqui antes da transcricao completa.</p>
+              <p class="inline-status" id="gateStatus">Ao encerrar, o MedVoz valida o assunto e transcreve automaticamente.</p>
             </article>
 
             <article class="content-card">
@@ -174,9 +174,6 @@
               </div>
               <textarea id="transcriptText" class="large-text" placeholder="A transcricao completa aparece aqui. Tambem e possivel colar uma transcricao externa para gerar documentos."></textarea>
             </article>
-          </div>
-
-          <div class="document-workbench">
             <article class="content-card">
               <div class="card-head">
                 <div>
@@ -297,7 +294,9 @@
               <small class="section-label">Clinica</small>
               <h2>Identidade do documento</h2>
               <label>Nome da clinica<input id="clinicName" placeholder="Ex.: Clinica Integrada"></label>
-              <label>Profissional/CRM<input id="doctorName" placeholder="Ex.: Dra. Ana Silva - CRM 00000"></label>
+              <label>Nome do medico<input id="doctorName" placeholder="Ex.: Dra. Ana Silva"></label>
+              <label>CRM/UF<input id="doctorCrm" placeholder="Ex.: CRM-SP 00000"></label>
+              <label>Especialidade do medico<input id="doctorSpecialty" placeholder="Ex.: Clinica medica"></label>
               <label>Rodape padrao<textarea id="footerText" class="medium-text" placeholder="Endereco, contato, observacoes padrao."></textarea></label>
             </article>
             <article class="content-card">
@@ -329,6 +328,6 @@
   <script src="js/app.js"></script>
   <script src="js/mic-visualizer.js"></script>
   <script src="components/ghz-window-bar.js" data-target=".menu-footer" data-accent="var(--accent)" data-theme-key="ghz-app-theme"></script>
-  <script src="components/ghz-support.js" data-target=".menu-footer-support" data-accent="var(--accent)"></script>
+  <script src="components/ghz-support.js" data-target=".menu-footer-support" data-accent="var(--accent)" data-whatsapp-label="WhatsApp"></script>
 </body>
 </html>

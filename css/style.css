@@ -599,6 +599,7 @@ body[data-theme="light"] .window-controls button:hover {
 
 .dashboard-grid,
 .clinical-grid,
+.clinical-flow,
 .document-workbench,
 .patient-layout,
 .agent-grid,
@@ -621,6 +622,18 @@ body[data-theme="light"] .window-controls button:hover {
 
 .clinical-grid {
   grid-template-columns: minmax(420px, .95fr) minmax(480px, 1.05fr);
+}
+
+.clinical-flow {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.clinical-flow .content-card {
+  min-height: auto;
+}
+
+.recorder-actions {
+  display: none;
 }
 
 .card-head,
@@ -1102,6 +1115,7 @@ textarea:focus {
 
   .dashboard-grid,
   .clinical-grid,
+  .clinical-flow,
   .document-workbench,
   .patient-layout,
   .agent-grid,
